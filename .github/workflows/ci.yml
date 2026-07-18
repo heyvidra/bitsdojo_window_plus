@@ -1,0 +1,128 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  analyze:
+    name: Dart Analyze
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        package:
+          - bitsdojo_window_platform_interface
+          - bitsdojo_window
+          - bitsdojo_window_linux
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+      - name: Install dependencies
+        working-directory: ${{ matrix.package }}
+        run: flutter pub get
+      - name: Analyze
+        working-directory: ${{ matrix.package }}
+        run: flutter analyze
+
+  analyze-windows:
+    name: Dart Analyze (Windows)
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        package:
+          - bitsdojo_window_windows
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+      - name: Install dependencies
+        working-directory: ${{ matrix.package }}
+        run: flutter pub get
+      - name: Analyze
+        working-directory: ${{ matrix.package }}
+        run: flutter analyze
+
+  analyze-macos:
+    name: Dart Analyze (macOS)
+    runs-on: macos-latest
+    strategy:
+      matrix:
+        package:
+          - bitsdojo_window_macos
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+      - name: Install dependencies
+        working-directory: ${{ matrix.package }}
+        run: flutter pub get
+      - name: Analyze
+        working-directory: ${{ matrix.package }}
+        run: flutter analyze
+
+  build-example-linux:
+    name: Build Example (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev
+      - name: Enable Linux desktop
+        run: flutter config --enable-linux-desktop
+      - name: Build
+        working-directory: example
+        run: flutter build linux --debug
+
+  build-example-windows:
+    name: Build Example (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+      - name: Enable Windows desktop
+        run: flutter config --enable-windows-desktop
+      - name: Build
+        working-directory: example
+        run: flutter build windows --debug
+
+  build-example-macos:
+    name: Build Example (macOS)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+      - name: Enable macOS desktop
+        run: flutter config --enable-macos-desktop
+      - name: Build
+        working-directory: example
+        run: flutter build macos --debug
+
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+      - name: Install dependencies
+        working-directory: example
+        run: flutter pub get
+      - name: Run tests
+        working-directory: example
+        run: flutter test
