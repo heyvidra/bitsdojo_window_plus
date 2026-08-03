@@ -9,6 +9,17 @@ MultiWindowManager &MultiWindowManager::GetInstance() {
   return instance;
 }
 
+// Reaps a child window process when it exits. Without this, every closed
+// child window stays as a <defunct> zombie for the parent's lifetime
+// (G_SPAWN_DO_NOT_REAP_CHILD disables GLib's automatic reaping).
+// Apps that also spawn processes via dart:io may see a benign GLib ECHILD
+// warning here: the Dart VM's exit-code handler waits on any child and can
+// reap ours first (pidfd-based watches on GLib >= 2.64 avoid the race).
+static void OnChildWindowExited(GPid pid, gint /*status*/,
+                                gpointer /*user_data*/) {
+  g_spawn_close_pid(pid);
+}
+
 MultiWindowManager::MultiWindowManager() {}
 
 MultiWindowManager::~MultiWindowManager() {
@@ -112,6 +123,8 @@ void MultiWindowManager::OpenNewWindow(const char *name, const char *arguments,
     g_warning("[MultiWindowManager] Failed to spawn child process: %s",
               error->message);
     g_error_free(error);
+  } else {
+    g_child_watch_add(child_pid, OnChildWindowExited, NULL);
   }
   g_ptr_array_unref(argv);
 }

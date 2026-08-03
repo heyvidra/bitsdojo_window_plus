@@ -272,6 +272,11 @@ class MainFlutterWindow: BitsdojoWindow {
     if let vc = self.contentViewController as? FlutterViewController {
       RegisterGeneratedPlugins(registry: vc)
     }
+    // Safety net for windows created with a class that doesn't register
+    // plugins itself (MultiWindowManager calls it only when needed).
+    MultiWindowManager.shared.pluginRegistrant = { registry in
+      RegisterGeneratedPlugins(registry: registry)
+    }
   }
 }
 ```
