@@ -15,6 +15,10 @@ open class BitsdojoWindow: NSWindow {
   @objc public var depth: Int = 0
   @objc public var windowName: String?
   @objc public var windowArguments: [String: Any]?
+  /// JSON encoding of [windowArguments], pre-encoded on the Dart side.
+  /// Preferred for --bdw-args because re-encoding the codec Map with
+  /// NSJSONSerialization loses the int/double distinction (1.0 -> "1").
+  @objc public var windowArgumentsJson: String?
 
   // MARK: - Window Handle
   
@@ -137,6 +141,27 @@ open class BitsdojoWindow: NSWindow {
   
   // MARK: - Flutter Setup
   
+  /// Builds the dart entrypoint arguments carrying this window's identity
+  /// (`--bdw-name=` / `--bdw-args=`), so Dart knows name/arguments
+  /// synchronously at main() instead of waiting for the windowReady channel
+  /// message (which races the first widget build).
+  private func makeEntrypointArguments() -> [String] {
+    var entrypointArguments: [String] = []
+    if let name = windowName {
+      entrypointArguments.append("--bdw-name=\(name)")
+    }
+    if let json = windowArgumentsJson {
+      entrypointArguments.append("--bdw-args=\(json)")
+    } else if let arguments = windowArguments,
+       JSONSerialization.isValidJSONObject(arguments),
+       let data = try? JSONSerialization.data(withJSONObject: arguments),
+       let json = String(data: data, encoding: .utf8) {
+      // Fallback for windows created natively (not via the Dart channel).
+      entrypointArguments.append("--bdw-args=\(json)")
+    }
+    return entrypointArguments
+  }
+
   /// Sets up the Flutter engine and view controller for this window.
   /// This method is called automatically for secondary windows created via MultiWindowManager.
   /// For the primary window, it's called via awakeFromNib() or can be called manually.
@@ -146,7 +171,15 @@ open class BitsdojoWindow: NSWindow {
   open func setupFlutter() {
     if self.contentViewController == nil {
        let viewBounds = self.contentView!.bounds
-       let flutterViewController = FlutterViewController()
+       let entrypointArguments = makeEntrypointArguments()
+       let flutterViewController: FlutterViewController
+       if entrypointArguments.isEmpty {
+         flutterViewController = FlutterViewController()
+       } else {
+         let project = FlutterDartProject()
+         project.dartEntrypointArguments = entrypointArguments
+         flutterViewController = FlutterViewController(project: project)
+       }
 
        // Configure frame and mask BEFORE assignment to ensure valid geometry for window creation.
        flutterViewController.view.frame = viewBounds

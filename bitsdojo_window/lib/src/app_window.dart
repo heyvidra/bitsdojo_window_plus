@@ -1,3 +1,4 @@
+import 'dart:convert' show jsonDecode;
 import 'dart:io' show Platform;
 
 import 'package:bitsdojo_window_linux/bitsdojo_window_linux.dart';
@@ -62,6 +63,43 @@ BitsdojoWindowPlatform get _platform {
     _platformInstanceNeedsInit = false;
   }
   return BitsdojoWindowPlatform.instance;
+}
+
+const _bdwNamePrefix = '--bdw-name=';
+const _bdwArgsPrefix = '--bdw-args=';
+
+/// Returns [args] without the `--bdw-*` identity arguments that the native
+/// side injects for secondary windows. Use this before handing main's args
+/// to your own argument parser (strict parsers would reject them).
+List<String> withoutWindowIdentityArgs(List<String> args) =>
+    args.where((arg) => !arg.startsWith('--bdw-')).toList();
+
+/// Seeds this window's identity from the engine's dart entrypoint arguments
+/// (`main(List<String> args)`), so `window.name` / `window.arguments` are
+/// available synchronously — before the first widget build — instead of
+/// waiting for the native `windowReady` message. Secondary windows created
+/// by the native side pass `--bdw-name=<name>` and `--bdw-args=<json>`.
+void seedWindowIdentityFromArgs(List<String> args) {
+  String? name;
+  Map<String, dynamic>? arguments;
+  for (final arg in args) {
+    if (arg.startsWith(_bdwNamePrefix)) {
+      name = arg.substring(_bdwNamePrefix.length);
+    } else if (arg.startsWith(_bdwArgsPrefix)) {
+      try {
+        arguments = jsonDecode(arg.substring(_bdwArgsPrefix.length))
+            as Map<String, dynamic>;
+      } catch (_) {
+        // Malformed JSON: fall back to the windowReady channel message.
+      }
+    }
+  }
+  if (name == null && arguments == null) return;
+  _platform.seedWindowIdentity(
+    name: name,
+    arguments: arguments,
+    isMainWindow: false,
+  );
 }
 
 void doWhenWindowReady(VoidCallback callback) {

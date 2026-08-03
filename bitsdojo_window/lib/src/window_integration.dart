@@ -12,12 +12,14 @@ typedef BitsdojoWindowAppBuilder = Widget Function();
 
 void runBitsdojoWindowApp({
   required Widget app,
+  List<String> args = const [],
   Map<String, WindowBuilder> routes = const {},
   List<WindowConfiguration> windowConfigurations = const [],
   WindowReadyHandler? onWindowReady,
 }) {
   WidgetsFlutterBinding.ensureInitialized();
   setupBitsdojoWindow(
+    args: args,
     routes: routes,
     windowConfigurations: windowConfigurations,
     onWindowReady: onWindowReady,
@@ -26,10 +28,12 @@ void runBitsdojoWindowApp({
 }
 
 void setupBitsdojoWindow({
+  List<String> args = const [],
   Map<String, WindowBuilder> routes = const {},
   List<WindowConfiguration> windowConfigurations = const [],
   WindowReadyHandler? onWindowReady,
 }) {
+  seedWindowIdentityFromArgs(args);
   WindowRouter.registerAll(routes);
   WindowConfigurationRegistry.registerAll(windowConfigurations);
   doWhenWindowReady(() async {

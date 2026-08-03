@@ -79,6 +79,7 @@ public class MultiWindowManager {
     public func openNewWindow(
         name: String?,
         arguments: [String: Any]?,
+        argumentsJson: String? = nil,
         size: NSSize?,
         position: NSPoint?
     ) -> BitsdojoWindow {
@@ -142,6 +143,7 @@ public class MultiWindowManager {
         // Configure window properties
         newWindow.windowName = name
         newWindow.windowArguments = arguments
+        newWindow.windowArgumentsJson = argumentsJson
         
         // Set depth based on parent
         if let parent = parent {

@@ -362,6 +362,7 @@ public class BitsdojoWindowPlugin: NSObject, FlutterPlugin {
         let args = call.arguments as? [String: Any]
         let name = args?["name"] as? String
         let arguments = args?["arguments"] as? [String: Any]
+        let argumentsJson = args?["argumentsJson"] as? String
         
         var size: NSSize? = nil
         if let width = args?["width"] as? Double, let height = args?["height"] as? Double {
@@ -378,6 +379,7 @@ public class BitsdojoWindowPlugin: NSObject, FlutterPlugin {
             let window = MultiWindowManager.shared.openNewWindow(
                 name: name,
                 arguments: arguments,
+                argumentsJson: argumentsJson,
                 size: size,
                 position: position
             )

@@ -39,6 +39,17 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
       [](const wchar_t *title, int x, int y, int width, int height,
          const char *name, const char *arguments) -> HWND {
         flutter::DartProject project(L"data");
+        // Bake window identity into the engine's entrypoint arguments so
+        // Dart knows name/arguments synchronously at main(), without the
+        // windowReady channel round trip.
+        std::vector<std::string> entrypoint_args;
+        if (name && name[0]) {
+          entrypoint_args.push_back(std::string("--bdw-name=") + name);
+        }
+        if (arguments && arguments[0]) {
+          entrypoint_args.push_back(std::string("--bdw-args=") + arguments);
+        }
+        project.set_dart_entrypoint_arguments(std::move(entrypoint_args));
         auto window = new FlutterWindow(project);
         Win32Window::Point origin(x, y);
         Win32Window::Size size(width, height);

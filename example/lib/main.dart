@@ -5,9 +5,10 @@ import 'dart:io';
 import 'package:bitsdojo_window/bitsdojo_window.dart';
 import 'package:flutter/material.dart';
 
-void main() {
+void main(List<String> args) {
   runBitsdojoWindowApp(
     app: const MyApp(),
+    args: args,
     routes: {
       'inspector_window': (context, arguments) => const MyHomePage(),
       'singleton_window': (context, arguments) => const SingletonDemoWindow(),

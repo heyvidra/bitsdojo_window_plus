@@ -28,9 +28,13 @@ For new code, **always recommend `runBitsdojoWindowApp`** over the legacy `doWhe
 import 'package:bitsdojo_window/bitsdojo_window.dart';
 import 'package:flutter/material.dart';
 
-void main() {
+void main(List<String> args) {
   runBitsdojoWindowApp(
     app: const MyApp(),
+    // Forward main's args: secondary windows receive their name/arguments as
+    // `--bdw-name=` / `--bdw-args=` entrypoint arguments, making window.name
+    // available before the first build (no windowReady race).
+    args: args,
     routes: {
       'child': (context, arguments) => ChildScreen(arguments: arguments),
     },
@@ -191,6 +195,14 @@ int APIENTRY wWinMain(...) {
     [](const wchar_t *title, int x, int y, int width, int height,
        const char *name, const char *arguments) -> HWND {
       flutter::DartProject project(L"data");
+      std::vector<std::string> entrypoint_args;
+      if (name && name[0]) {
+        entrypoint_args.push_back(std::string("--bdw-name=") + name);
+      }
+      if (arguments && arguments[0]) {
+        entrypoint_args.push_back(std::string("--bdw-args=") + arguments);
+      }
+      project.set_dart_entrypoint_arguments(std::move(entrypoint_args));
       auto window = new FlutterWindow(project);
       Win32Window::Point origin(x, y);
       Win32Window::Size size(width, height);
@@ -206,12 +218,30 @@ int APIENTRY wWinMain(...) {
 // flutter_window.cpp
 #include <bitsdojo_window_windows/multi_window_manager.h>
 
+// In MessageHandler's switch, before delegating to Win32Window::MessageHandler.
+// Do NOT call OnWindowDestroyed from OnDestroy(): the stock Win32Window
+// template nulls window_handle_ before OnDestroy runs, so GetHandle()
+// there returns nullptr and the cleanup silently no-ops.
+case WM_DESTROY:
+  MultiWindowManager::GetInstance().OnWindowDestroyed(hwnd);
+  break;
+
+// OnDestroy keeps its stock body (engine teardown):
 void FlutterWindow::OnDestroy() {
-  MultiWindowManager::GetInstance().OnWindowDestroyed(GetHandle());
   if (flutter_controller_) flutter_controller_ = nullptr;
   Win32Window::OnDestroy();
 }
 ```
+
+The runner-side `OnWindowDestroyed` call is best-effort: the plugin's own
+`WM_NCDESTROY` subclass hook performs the same cleanup for every registered
+window, so un-updated runners still get correct MultiWindowManager cleanup.
+
+Note on `--bdw-*` args: secondary windows receive `--bdw-name=` / `--bdw-args=`
+in `main(List<String> args)`. If the app parses main's args itself, filter them
+first with `withoutWindowIdentityArgs(args)`. Launching the app manually with
+`--bdw-*` on the command line would mis-seed the primary window — these flags
+are reserved for windows spawned by the plugin.
 
 Flags: `BDW_CUSTOM_FRAME` removes OS title bar; `BDW_HIDE_ON_STARTUP` hides until `window.show()`. Drop either flag to opt out.
 
@@ -288,7 +318,7 @@ Federated subpackages (`bitsdojo_window_macos`, etc.) are pulled in transitively
 3. **"`backgroundEffect` does nothing on Linux"** — unsupported; gate with `Platform.isLinux` or capabilities. Same for `titleBarHeight` on Linux.
 4. **"`onClose` fires but window won't actually close"** — the interceptor returned `false` (or threw). The library only calls `appWindow.close()` when the interceptor resolves to `true`. If you set `appWindow.onClose` manually *and* mount `RoutedWindowHost`, the host overwrites it — pick one.
 5. **"Drag doesn't work on the custom title bar"** — wrap the title region with `MoveWindow` (or call `appWindow.startDragging()` from a `GestureDetector.onPanStart`). Buttons should sit on top of `MoveWindow`, not inside it.
-6. **"Multi-window broken on Windows"** — `MultiWindowManager::SetWindowFactory` not wired in `main.cpp`, or `OnWindowDestroyed` missing in `flutter_window.cpp`. Both are required.
+6. **"Multi-window broken on Windows"** — `MultiWindowManager::SetWindowFactory` not wired in `main.cpp`. (The `OnWindowDestroyed` runner call is best-effort since the plugin's `WM_NCDESTROY` hook took over cleanup; the factory is still mandatory.)
 7. **"macOS app quits when last child window closes unexpectedly"** — the app delegate isn't extending `BitsdojoWindowAppDelegate`. Don't subclass `FlutterAppDelegate` directly.
 8. **Editing tests** — there are test fakes/mocks for `DesktopWindow` (see `bitsdojo_window_platform_interface/test/`). When adding a new field to `DesktopWindow`, update the fakes too; CI has previously broken on missing `hasShadow` impls (see commit `10afe0c`).
 

@@ -59,6 +59,16 @@ abstract class BitsdojoWindowPlatform extends PlatformInterface {
     return true; // Default to true for single-handle platforms
   }
 
+  /// Seeds this engine's window identity from values known at engine startup
+  /// (e.g. parsed from dart entrypoint arguments), so `window.name` /
+  /// `window.arguments` are correct before the native `windowReady` message
+  /// arrives. Platforms without startup identity ignore this.
+  void seedWindowIdentity({
+    String? name,
+    Map<String, dynamic>? arguments,
+    bool? isMainWindow,
+  }) {}
+
   void terminateApp() {
     // Default to nothing or common exit
   }

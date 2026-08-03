@@ -17,7 +17,20 @@ class BitsdojoWindowWindows extends BitsdojoWindowPlatform {
   int? _handle;
   bool _firstFrameRasterized = false;
   bool _didStartReadyWait = false;
+  bool _identitySeeded = false;
   late final WinWindow _appWindow;
+
+  @override
+  void seedWindowIdentity({
+    String? name,
+    Map<String, dynamic>? arguments,
+    bool? isMainWindow,
+  }) {
+    _identitySeeded = true;
+    if (name != null) _appWindow.name = name;
+    if (arguments != null) _appWindow.arguments = arguments;
+    if (isMainWindow != null) _appWindow.isMainWindow = isMainWindow;
+  }
 
   @override
   DesktopWindow getWindowForHandle(int handle) {
@@ -52,7 +65,9 @@ class BitsdojoWindowWindows extends BitsdojoWindowPlatform {
         }
 
         _appWindow.handle = handle;
-        _appWindow.name = name;
+        if (name != null) {
+          _appWindow.name = name;
+        }
         if (argumentsString != null) {
           try {
             _appWindow.arguments =
@@ -111,7 +126,9 @@ class BitsdojoWindowWindows extends BitsdojoWindowPlatform {
     if (handle == 0) return;
 
     _handle = handle;
-    _appWindow.isMainWindow = true;
+    if (!_identitySeeded) {
+      _appWindow.isMainWindow = true;
+    }
     _appWindow.handle = handle;
     _windows[handle] = _appWindow;
   }
