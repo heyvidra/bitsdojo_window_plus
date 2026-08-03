@@ -172,7 +172,10 @@ class _WindowEventListenerState extends State<WindowEventListener> {
     }
 
     final shouldClose = await interceptor(context, appWindow);
-    if (mounted && shouldClose) {
+    // `mounted` only guards BuildContext use, which already happened —
+    // a close the user explicitly confirmed must not be dropped just
+    // because this listener unmounted during the await.
+    if (shouldClose) {
       appWindow.close();
     }
   }

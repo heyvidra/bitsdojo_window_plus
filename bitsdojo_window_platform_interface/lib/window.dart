@@ -34,6 +34,10 @@ abstract class DesktopWindow {
   /// when the native `windowReady` message delivers name/arguments after
   /// engine startup, or `updateArguments` targets an existing named window.
   /// Multi-listener alternative to the single-slot [onArgumentsChanged].
+  ///
+  /// Platform implementations currently fire this only on the engine's own
+  /// `appWindow`; proxy instances from `getWindowForHandle` expose the
+  /// Listenable but receive no notifications.
   Listenable get changes => _changes;
 
   /// For platform implementations: signals [changes] listeners that this
