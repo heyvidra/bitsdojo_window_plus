@@ -8,8 +8,6 @@ import 'package:flutter/widgets.dart';
 import './native_api.dart';
 import './window.dart';
 
-T? _ambiguate<T>(T? value) => value;
-
 class BitsdojoWindowMacOS extends BitsdojoWindowPlatform {
   static const MethodChannel _channel = MethodChannel('bitsdojo/window');
 
@@ -71,6 +69,7 @@ class BitsdojoWindowMacOS extends BitsdojoWindowPlatform {
         }
         _pendingCallbacks.clear();
 
+        _appWindow.notifyWindowChanged();
         if (_appWindow.onArgumentsChanged != null) {
           _appWindow.onArgumentsChanged!();
         }
@@ -81,6 +80,7 @@ class BitsdojoWindowMacOS extends BitsdojoWindowPlatform {
             (call.arguments['arguments'] as Map?)?.cast<String, dynamic>();
         final window = getWindowForHandle(_handle!) as MacOSWindow;
         window.arguments = arguments;
+        window.notifyWindowChanged();
         if (window.onArgumentsChanged != null) {
           window.onArgumentsChanged!();
         }
@@ -97,9 +97,7 @@ class BitsdojoWindowMacOS extends BitsdojoWindowPlatform {
 
   @override
   void doWhenWindowReady(VoidCallback callback) {
-    _ambiguate(WidgetsBinding.instance)!
-        .waitUntilFirstFrameRasterized
-        .then((value) {
+    WidgetsBinding.instance.waitUntilFirstFrameRasterized.then((value) {
       if (_isWindowReady && _handle != null) {
         _ready(_handle!, callback);
       } else {

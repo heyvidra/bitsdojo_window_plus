@@ -145,6 +145,9 @@ class _MyHomePageState extends State<MyHomePage> {
   @override
   void initState() {
     super.initState();
+    // Refresh the identity badges / stat panels when windowReady or
+    // updateArguments land after the first build.
+    appWindow.changes.addListener(_onWindowChanged);
     _titleController.text = appWindow.isMainWindow
         ? 'Bitsdojo Multi-Window Dashboard'
         : 'Child Window - ${appWindow.name ?? 'Untitled'}';
@@ -155,8 +158,13 @@ class _MyHomePageState extends State<MyHomePage> {
         : WindowEffect.disabled;
   }
 
+  void _onWindowChanged() {
+    if (mounted) setState(() {});
+  }
+
   @override
   void dispose() {
+    appWindow.changes.removeListener(_onWindowChanged);
     _titleController.dispose();
     super.dispose();
   }

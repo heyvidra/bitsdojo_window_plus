@@ -8,8 +8,6 @@ import './native_api.dart';
 
 export './window_interface.dart';
 
-T? _ambiguate<T>(T? value) => value;
-
 class BitsdojoWindowWindows extends BitsdojoWindowPlatform {
   static const MethodChannel _channel = MethodChannel('bitsdojo/window');
   final _windows = <int, WinWindow>{};
@@ -80,6 +78,7 @@ class BitsdojoWindowWindows extends BitsdojoWindowPlatform {
         _windows[handle] = _appWindow;
         _flushReadyCallbacks();
 
+        _appWindow.notifyWindowChanged();
         if (_appWindow.onArgumentsChanged != null) {
           _appWindow.onArgumentsChanged!();
         }
@@ -90,6 +89,7 @@ class BitsdojoWindowWindows extends BitsdojoWindowPlatform {
         try {
           final newArgs = jsonDecode(argumentsString) as Map<String, dynamic>;
           _appWindow.arguments = newArgs;
+          _appWindow.notifyWindowChanged();
           if (_appWindow.onArgumentsChanged != null) {
             _appWindow.onArgumentsChanged!();
           }
@@ -111,9 +111,7 @@ class BitsdojoWindowWindows extends BitsdojoWindowPlatform {
   void _ensureReadyWaitStarted() {
     if (_didStartReadyWait) return;
     _didStartReadyWait = true;
-    _ambiguate(WidgetsBinding.instance)!
-        .waitUntilFirstFrameRasterized
-        .then((value) {
+    WidgetsBinding.instance.waitUntilFirstFrameRasterized.then((value) {
       _firstFrameRasterized = true;
       _refreshHandleFromNative();
       _flushReadyCallbacks();
