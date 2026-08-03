@@ -14,10 +14,16 @@ class MainFlutterWindow: BitsdojoWindow {
   
   override func setupFlutter() {
     super.setupFlutter()
-    
+
     // Register plugins for this window's Flutter engine
     if let flutterViewController = self.contentViewController as? FlutterViewController {
       RegisterGeneratedPlugins(registry: flutterViewController)
+    }
+
+    // Safety net: if a future window is created with a class that doesn't
+    // register plugins itself, MultiWindowManager uses this to register them.
+    MultiWindowManager.shared.pluginRegistrant = { registry in
+      RegisterGeneratedPlugins(registry: registry)
     }
   }
 }

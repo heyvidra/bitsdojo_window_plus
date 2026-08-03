@@ -1,3 +1,10 @@
+## 0.3.0
+    - `runBitsdojoWindowApp`/`setupBitsdojoWindow` accept main's `args` and seed window identity from `--bdw-name=`/`--bdw-args=` entrypoint arguments, so `window.name`/`arguments` are correct before the first build (no windowReady race). Added `seedWindowIdentityFromArgs` and `withoutWindowIdentityArgs`.
+    - `RoutedWindowHost` re-evaluates the route when the window's identity changes; child windows can no longer get stuck on the default route.
+    - `WindowEventListener` releases the single-slot callbacks only when it still owns them, and never hands a defunct BuildContext to a close interceptor. A close confirmed by the interceptor is honored even if the listener unmounted during the await.
+    - `animateTo` uses a monotonic clock (immune to wall-clock jumps).
+    - Requires Flutter >=3.0.0.
+
 ## 0.2.0
     - Added `runBitsdojoWindowApp`, `setupBitsdojoWindow`, `WindowEventListener`, and `RoutedWindowHost` to simplify Flutter-side integration.
     - Updated examples and README to use the new high-level integration helpers.

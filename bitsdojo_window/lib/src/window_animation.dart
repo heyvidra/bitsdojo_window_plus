@@ -110,21 +110,23 @@ class _WindowAnimationSession {
 
   final Completer<void> _completer = Completer<void>();
   Timer? _timer;
-  late final DateTime _startedAt;
+  // Monotonic clock: wall-clock (DateTime.now) jumps on NTP adjustments and
+  // would teleport or stall the animation.
+  final Stopwatch _elapsed = Stopwatch();
   late final double _coordinateScale;
   late final Size _initialSize;
   late final Offset _initialPosition;
 
   Future<void> start() {
-    _startedAt = DateTime.now();
+    _elapsed.start();
     _coordinateScale = _resolveCoordinateScale(window);
     _initialPosition = _getLogicalPosition(window, _coordinateScale);
     _initialSize = window.size;
 
     _applyFrame(0);
     _timer = Timer.periodic(const Duration(milliseconds: 16), (_) {
-      final elapsed = DateTime.now().difference(_startedAt);
-      final rawProgress = elapsed.inMicroseconds / duration.inMicroseconds;
+      final rawProgress =
+          _elapsed.elapsedMicroseconds / duration.inMicroseconds;
       if (rawProgress >= 1) {
         _complete();
         return;

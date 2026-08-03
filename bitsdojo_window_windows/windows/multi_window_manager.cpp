@@ -113,16 +113,23 @@ void MultiWindowManager::RegisterMessageSender(HWND window,
 }
 
 void MultiWindowManager::CloseWindow(const std::string &name) {
-  std::lock_guard<std::recursive_mutex> lock(mutex_);
-
-  auto it = windows_.find(name);
-  if (it != windows_.end()) {
-    HWND hwnd = it->second;
-    if (IsWindow(hwnd)) {
-      DestroyWindow(hwnd);
+  HWND hwnd = nullptr;
+  {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    auto it = windows_.find(name);
+    if (it == windows_.end()) {
+      return;
     }
-    window_names_.erase(hwnd);
+    hwnd = it->second;
+    // Erase by key BEFORE DestroyWindow: destruction re-enters
+    // OnWindowDestroyed (WM_NCDESTROY subclass hook), which would otherwise
+    // erase the element this iterator points to, invalidating it.
     windows_.erase(it);
+    window_names_.erase(hwnd);
+  }
+
+  if (IsWindow(hwnd)) {
+    DestroyWindow(hwnd);
   }
 }
 

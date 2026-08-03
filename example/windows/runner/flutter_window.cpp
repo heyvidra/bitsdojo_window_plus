@@ -49,7 +49,6 @@ bool FlutterWindow::OnCreate() {
 #include <bitsdojo_window_windows/multi_window_manager.h>
 
 void FlutterWindow::OnDestroy() {
-  MultiWindowManager::GetInstance().OnWindowDestroyed(GetHandle());
   if (flutter_controller_) {
     flutter_controller_ = nullptr;
   }
@@ -74,6 +73,11 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
   switch (message) {
   case WM_FONTCHANGE:
     flutter_controller_->engine()->ReloadSystemFonts();
+    break;
+  case WM_DESTROY:
+    // Must run here, not in OnDestroy(): Win32Window nulls window_handle_
+    // before OnDestroy(), so GetHandle() there never yields the real HWND.
+    MultiWindowManager::GetInstance().OnWindowDestroyed(hwnd);
     break;
   }
 

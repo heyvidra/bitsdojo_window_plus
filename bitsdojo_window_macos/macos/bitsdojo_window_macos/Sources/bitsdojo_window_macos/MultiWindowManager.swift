@@ -33,6 +33,20 @@ public class MultiWindowManager {
     /// Set this to your custom window class (e.g., MainFlutterWindow.self) to ensure
     /// plugin registration and custom configuration are applied to all windows.
     public var windowClass: BitsdojoWindow.Type = BitsdojoWindow.self
+
+    /// Registers plugins on a newly created secondary window's engine.
+    /// Set this once from the runner, e.g.:
+    ///   MultiWindowManager.shared.pluginRegistrant = { RegisterGeneratedPlugins(registry: $0) }
+    /// It is invoked only when the window class itself did not already
+    /// register plugins in its setupFlutter() override — without either,
+    /// every plugin call on the new engine throws MissingPluginException
+    /// and the engine is never shut down on close.
+    ///
+    /// Note: a setupFlutter() override that registers plugins must do so
+    /// synchronously and include BitsdojoWindowPlugin (registering it is how
+    /// the manager detects "already registered"); partial manual
+    /// registration would be double-registered by this registrant.
+    public var pluginRegistrant: ((FlutterPluginRegistry) -> Void)?
     
     // MARK: - Public API
     
@@ -49,24 +63,39 @@ public class MultiWindowManager {
     
     /// Auto-detects the primary window using multiple fallback strategies.
     public func autoDetectPrimaryWindow() {
+        // One-shot: never retarget once a primary is known. Plugin
+        // registration on SECONDARY engines re-arms the 0.5s delayed detect
+        // (BitsdojoWindowPlugin.register), at which point the just-opened
+        // secondary is NSApp.mainWindow — retargeting would make closing the
+        // real primary no longer terminate the app. primaryWindow is weak,
+        // so re-detection still happens if the primary actually went away.
+        guard primaryWindow == nil else { return }
+
         // Strategy 1: Try to get mainFlutterWindow from FlutterAppDelegate
         if let appDelegate = NSApp.delegate as? FlutterAppDelegate,
            let window = appDelegate.value(forKey: "mainFlutterWindow") as? NSWindow {
             registerPrimaryWindow(window)
             return
         }
-        
-        // Strategy 2: Use NSApp.mainWindow
-        if let window = NSApp.mainWindow {
+
+        // Strategy 2: Use NSApp.mainWindow (never a tracked secondary)
+        if let window = NSApp.mainWindow, !isTrackedSecondaryWindow(window) {
             registerPrimaryWindow(window)
             return
         }
-        
-        // Strategy 3: Find first BitsdojoWindow
-        if let window = NSApp.windows.first(where: { $0 is BitsdojoWindow }) {
+
+        // Strategy 3: Find first BitsdojoWindow that isn't a tracked secondary
+        if let window = NSApp.windows.first(where: {
+            $0 is BitsdojoWindow && !isTrackedSecondaryWindow($0)
+        }) {
             registerPrimaryWindow(window)
             return
         }
+    }
+
+    private func isTrackedSecondaryWindow(_ window: NSWindow) -> Bool {
+        guard let bdwWindow = window as? BitsdojoWindow else { return false }
+        return secondaryWindows.contains(where: { $0 === bdwWindow })
     }
     
     /// Opens a new window with the specified parameters.
@@ -79,9 +108,19 @@ public class MultiWindowManager {
     public func openNewWindow(
         name: String?,
         arguments: [String: Any]?,
+        argumentsJson: String? = nil,
         size: NSSize?,
         position: NSPoint?
     ) -> BitsdojoWindow {
+        // Adopt the app's window subclass before creating anything. The
+        // 0.5s-delayed auto-detect in BitsdojoWindowPlugin.register may not
+        // have run yet if a window opens right after startup — without this,
+        // early windows are created as plain BitsdojoWindow and miss the
+        // subclass's plugin registration.
+        if primaryWindow == nil {
+            autoDetectPrimaryWindow()
+        }
+
         // Check if window with this name already exists
         if let name = name, let existingWindow = namedWindows[name] {
             if canReuseWindow(existingWindow) {
@@ -142,6 +181,7 @@ public class MultiWindowManager {
         // Configure window properties
         newWindow.windowName = name
         newWindow.windowArguments = arguments
+        newWindow.windowArgumentsJson = argumentsJson
         
         // Set depth based on parent
         if let parent = parent {
@@ -150,9 +190,32 @@ public class MultiWindowManager {
         
         // Register with bitsdojo_window
         BitsdojoWindowPlugin.registerWindow(newWindow)
-        
+
         // Setup Flutter engine
         newWindow.setupFlutter()
+
+        // Ensure the new engine has plugins. A window subclass following the
+        // documented pattern registers them inside its setupFlutter()
+        // override (detected via valuePublished); a plain BitsdojoWindow
+        // registers nothing, which would leave the engine plugin-less AND
+        // leak it on close (teardown lives in BitsdojoWindowPlugin's
+        // willClose observer).
+        if let flutterViewController = newWindow.contentViewController as? FlutterViewController,
+           flutterViewController.valuePublished(byPlugin: "BitsdojoWindowPlugin") == nil {
+            if let registrant = pluginRegistrant {
+                registrant(flutterViewController)
+            } else {
+                // Minimal fallback: register this plugin alone so window
+                // control, windowReady delivery, and engine teardown work.
+                BitsdojoWindowPlugin.register(
+                    with: flutterViewController.registrar(forPlugin: "BitsdojoWindowPlugin"))
+                NSLog("bitsdojo_window: new window engine had no plugins registered; " +
+                      "only BitsdojoWindowPlugin was added as a fallback. Set " +
+                      "MultiWindowManager.shared.pluginRegistrant = { RegisterGeneratedPlugins(registry: $0) } " +
+                      "(or use a BitsdojoWindow subclass that registers plugins in setupFlutter()) " +
+                      "so all plugins work in secondary windows.")
+            }
+        }
         
         // Track window
         secondaryWindows.append(newWindow)
@@ -187,20 +250,25 @@ public class MultiWindowManager {
     // MARK: - Internal Methods
     
     internal func handleWindowClose(_ window: NSWindow) {
-        closingWindowHandles.insert(window.windowNumber)
-        
+        // The willClose observer fires for EVERY NSWindow in the process
+        // (save panels, alerts, other plugins' windows) — only touch
+        // closingWindowHandles for windows this manager tracks, otherwise
+        // the set grows without bound over the app's lifetime.
+
         // Check if it's a secondary window
         if let bdwWindow = window as? BitsdojoWindow,
            secondaryWindows.contains(where: { $0 === bdwWindow }) {
-            // Remove from tracking
+            // Remove from tracking. Only drop the namedWindows entry if it
+            // still points at THIS window — a replacement window may have
+            // been created under the same name while this one was closing.
             secondaryWindows.removeAll(where: { $0 === bdwWindow })
-            if let name = bdwWindow.windowName {
+            if let name = bdwWindow.windowName, namedWindows[name] === bdwWindow {
                 namedWindows.removeValue(forKey: name)
             }
             closingWindowHandles.remove(window.windowNumber)
             return
         }
-        
+
         // Check if it's the primary window
         if window === primaryWindow {
             if shouldTerminateOnPrimaryClose {
@@ -234,7 +302,20 @@ public class MultiWindowManager {
     
     private func canReuseWindow(_ window: BitsdojoWindow) -> Bool {
         if closingWindowHandles.contains(window.windowNumber) {
-            return false
+            // markWindowClosing runs when a close is REQUESTED (before Dart's
+            // onClose interceptor decides). A vetoed close never fires
+            // willClose — and Dart sends no veto notification — so the mark
+            // would otherwise poison reuse of this named window forever.
+            // A window that is still on screen demonstrably survived the
+            // request; clear the stale mark. Known limitation: a close still
+            // being deliberated also passes this check — reusing (focus +
+            // args update) is benign there, and if the user then confirms
+            // the close the window simply closes as requested.
+            if window.isVisible || window.isMiniaturized {
+                closingWindowHandles.remove(window.windowNumber)
+            } else {
+                return false
+            }
         }
         if window.screen == nil {
             return false

@@ -12,12 +12,14 @@ typedef BitsdojoWindowAppBuilder = Widget Function();
 
 void runBitsdojoWindowApp({
   required Widget app,
+  List<String> args = const [],
   Map<String, WindowBuilder> routes = const {},
   List<WindowConfiguration> windowConfigurations = const [],
   WindowReadyHandler? onWindowReady,
 }) {
   WidgetsFlutterBinding.ensureInitialized();
   setupBitsdojoWindow(
+    args: args,
     routes: routes,
     windowConfigurations: windowConfigurations,
     onWindowReady: onWindowReady,
@@ -26,10 +28,12 @@ void runBitsdojoWindowApp({
 }
 
 void setupBitsdojoWindow({
+  List<String> args = const [],
   Map<String, WindowBuilder> routes = const {},
   List<WindowConfiguration> windowConfigurations = const [],
   WindowReadyHandler? onWindowReady,
 }) {
+  seedWindowIdentityFromArgs(args);
   WindowRouter.registerAll(routes);
   WindowConfigurationRegistry.registerAll(windowConfigurations);
   doWhenWindowReady(() async {
@@ -38,7 +42,7 @@ void setupBitsdojoWindow({
   });
 }
 
-class RoutedWindowHost extends StatelessWidget {
+class RoutedWindowHost extends StatefulWidget {
   const RoutedWindowHost({
     super.key,
     required this.defaultChild,
@@ -55,16 +59,51 @@ class RoutedWindowHost extends StatelessWidget {
   final bool rebuildOnArgumentsChanged;
 
   @override
+  State<RoutedWindowHost> createState() => _RoutedWindowHostState();
+}
+
+class _RoutedWindowHostState extends State<RoutedWindowHost> {
+  DesktopWindow get _activeWindow => widget.window ?? appWindow;
+
+  @override
+  void initState() {
+    super.initState();
+    _activeWindow.changes.addListener(_onWindowChanged);
+  }
+
+  @override
+  void didUpdateWidget(RoutedWindowHost oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.window != widget.window) {
+      (oldWidget.window ?? appWindow).changes.removeListener(_onWindowChanged);
+      _activeWindow.changes.addListener(_onWindowChanged);
+    }
+  }
+
+  @override
+  void dispose() {
+    _activeWindow.changes.removeListener(_onWindowChanged);
+    super.dispose();
+  }
+
+  void _onWindowChanged() {
+    // Re-evaluate the route here, in the State that owns the setState:
+    // window.name/arguments may only arrive via the native windowReady
+    // message after the first build (the entrypoint-args fast path makes
+    // them available earlier, but un-updated runners rely on this).
+    if (mounted) setState(() {});
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final activeWindow = window ?? appWindow;
     return WindowEventListener(
-      onCloseRequested: onCloseRequested,
-      onArgumentsChanged: onArgumentsChanged,
-      rebuildOnArgumentsChanged: rebuildOnArgumentsChanged,
+      onCloseRequested: widget.onCloseRequested,
+      onArgumentsChanged: widget.onArgumentsChanged,
+      rebuildOnArgumentsChanged: widget.rebuildOnArgumentsChanged,
       child: WindowRouter.build(
         context,
-        activeWindow,
-        defaultWidget: defaultChild,
+        _activeWindow,
+        defaultWidget: widget.defaultChild,
       ),
     );
   }
@@ -89,20 +128,35 @@ class WindowEventListener extends StatefulWidget {
 }
 
 class _WindowEventListenerState extends State<WindowEventListener> {
-  bool _disposed = false;
-
   @override
   void initState() {
     super.initState();
+    assert(() {
+      if (appWindow.onClose != null || appWindow.onArgumentsChanged != null) {
+        debugPrint(
+          'bitsdojo_window: WindowEventListener is replacing an existing '
+          'onClose/onArgumentsChanged handler. These are single-slot '
+          'callbacks — mount only one listener (or use window.changes for '
+          'multi-listener notifications).',
+        );
+      }
+      return true;
+    }());
     appWindow.onClose = _handleCloseRequested;
     appWindow.onArgumentsChanged = _handleArgumentsChanged;
   }
 
   @override
   void dispose() {
-    _disposed = true;
-    appWindow.onClose = null;
-    appWindow.onArgumentsChanged = null;
+    // Only release the slots this listener still owns — a newer listener
+    // (e.g. two hosts briefly mounted during a route transition) may have
+    // replaced them, and nulling unconditionally would silently disable it.
+    if (appWindow.onClose == _handleCloseRequested) {
+      appWindow.onClose = null;
+    }
+    if (appWindow.onArgumentsChanged == _handleArgumentsChanged) {
+      appWindow.onArgumentsChanged = null;
+    }
     super.dispose();
   }
 
@@ -110,13 +164,18 @@ class _WindowEventListenerState extends State<WindowEventListener> {
     final interceptor =
         widget.onCloseRequested ??
         WindowConfigurationRegistry.resolve(appWindow)?.onCloseRequested;
-    if (interceptor == null) {
+    // A defunct listener can't safely hand its BuildContext to the
+    // interceptor (e.g. showDialog) — fall through to a plain close.
+    if (interceptor == null || !mounted) {
       appWindow.close();
       return;
     }
 
     final shouldClose = await interceptor(context, appWindow);
-    if (!_disposed && shouldClose) {
+    // `mounted` only guards BuildContext use, which already happened —
+    // a close the user explicitly confirmed must not be dropped just
+    // because this listener unmounted during the await.
+    if (shouldClose) {
       appWindow.close();
     }
   }
@@ -126,7 +185,7 @@ class _WindowEventListenerState extends State<WindowEventListener> {
     WindowConfigurationRegistry.resolve(appWindow)?.onArgumentsChanged?.call(
       appWindow,
     );
-    if (!_disposed && widget.rebuildOnArgumentsChanged) {
+    if (mounted && widget.rebuildOnArgumentsChanged) {
       setState(() {});
     }
   }

@@ -4,7 +4,7 @@ import PackageDescription
 let package = Package(
     name: "bitsdojo_window_macos",
     platforms: [
-        .macOS(.v10_14)
+        .macOS(.v12)
     ],
     products: [
         .library(name: "bitsdojo-window-macos", targets: ["bitsdojo_window_macos"])

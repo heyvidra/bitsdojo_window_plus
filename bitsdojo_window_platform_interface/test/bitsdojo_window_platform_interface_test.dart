@@ -166,6 +166,20 @@ void main() {
       expect(window.rect, const Rect.fromLTWH(100, 100, 800, 600));
     });
 
+    test('notifyWindowChanged fires changes listeners until removed', () {
+      var notified = 0;
+      void listener() => notified++;
+
+      window.changes.addListener(listener);
+      window.notifyWindowChanged();
+      window.notifyWindowChanged();
+      expect(notified, 2);
+
+      window.changes.removeListener(listener);
+      window.notifyWindowChanged();
+      expect(notified, 2);
+    });
+
     test('show/hide toggles isVisible', () {
       window.hide();
       expect(window.isVisible, isFalse);

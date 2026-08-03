@@ -1,3 +1,8 @@
+## 0.3.0
+    - Added `DesktopWindow.changes` (multi-listener `Listenable`) and `notifyWindowChanged()` for windowReady/updateArguments notifications.
+    - Added `BitsdojoWindowPlatform.seedWindowIdentity` for identity known at engine startup.
+    - Requires Flutter >=3.0.0.
+
 ## 0.2.0
     - Removed an invalid override annotation from the platform interface.
 

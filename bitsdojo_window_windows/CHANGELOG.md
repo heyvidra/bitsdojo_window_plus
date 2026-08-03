@@ -1,3 +1,8 @@
+## 0.3.0
+    - Per-window cleanup now runs from the plugin's own WM_NCDESTROY hook, fixing MultiWindowManager bookkeeping that silently leaked (the stock runner template nulls the HWND before OnDestroy).
+    - `CloseWindow` no longer holds a map iterator across DestroyWindow (undefined behavior once re-entrant cleanup works).
+    - The runner window factory should pass `--bdw-name=`/`--bdw-args=` via `set_dart_entrypoint_arguments` (see example) so child windows know their identity at startup.
+
 ## 0.2.0
     - Allowed `minSize` and `maxSize` constraints to be cleared again.
     - Improved multi-window lifecycle cleanup for destroyed child windows.

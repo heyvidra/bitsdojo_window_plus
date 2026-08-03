@@ -5,9 +5,10 @@ import 'dart:io';
 import 'package:bitsdojo_window/bitsdojo_window.dart';
 import 'package:flutter/material.dart';
 
-void main() {
+void main(List<String> args) {
   runBitsdojoWindowApp(
     app: const MyApp(),
+    args: args,
     routes: {
       'inspector_window': (context, arguments) => const MyHomePage(),
       'singleton_window': (context, arguments) => const SingletonDemoWindow(),
@@ -144,6 +145,9 @@ class _MyHomePageState extends State<MyHomePage> {
   @override
   void initState() {
     super.initState();
+    // Refresh the identity badges / stat panels when windowReady or
+    // updateArguments land after the first build.
+    appWindow.changes.addListener(_onWindowChanged);
     _titleController.text = appWindow.isMainWindow
         ? 'Bitsdojo Multi-Window Dashboard'
         : 'Child Window - ${appWindow.name ?? 'Untitled'}';
@@ -154,8 +158,13 @@ class _MyHomePageState extends State<MyHomePage> {
         : WindowEffect.disabled;
   }
 
+  void _onWindowChanged() {
+    if (mounted) setState(() {});
+  }
+
   @override
   void dispose() {
+    appWindow.changes.removeListener(_onWindowChanged);
     _titleController.dispose();
     super.dispose();
   }

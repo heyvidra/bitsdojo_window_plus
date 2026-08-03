@@ -10,8 +10,6 @@ import 'package:flutter/widgets.dart';
 
 import './native_api.dart';
 
-T? _ambiguate<T>(T? value) => value;
-
 class BitsdojoWindowLinux extends BitsdojoWindowPlatform {
   static const MethodChannel _channel = MethodChannel('bitsdojo/window');
   final _windows = <int, GtkWindow>{};
@@ -39,6 +37,7 @@ class BitsdojoWindowLinux extends BitsdojoWindowPlatform {
             final newArgs = jsonDecode(argumentsString) as Map<String, dynamic>;
             final window = appWindow as GtkWindow;
             window.arguments = newArgs;
+            window.notifyWindowChanged();
             if (window.onArgumentsChanged != null) {
               window.onArgumentsChanged!();
             }
@@ -57,9 +56,7 @@ class BitsdojoWindowLinux extends BitsdojoWindowPlatform {
 
   @override
   void doWhenWindowReady(VoidCallback callback) {
-    _ambiguate(WidgetsBinding.instance)!
-        .waitUntilFirstFrameRasterized
-        .then((value) {
+    WidgetsBinding.instance.waitUntilFirstFrameRasterized.then((value) {
       isInsideDoWhenWindowReady = true;
       callback();
       isInsideDoWhenWindowReady = false;

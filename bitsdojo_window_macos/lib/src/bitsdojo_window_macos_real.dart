@@ -1,12 +1,12 @@
 library bitsdojo_window_macos;
 
+import 'dart:convert';
+
 import 'package:bitsdojo_window_platform_interface/bitsdojo_window_platform_interface.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import './native_api.dart';
 import './window.dart';
-
-T? _ambiguate<T>(T? value) => value;
 
 class BitsdojoWindowMacOS extends BitsdojoWindowPlatform {
   static const MethodChannel _channel = MethodChannel('bitsdojo/window');
@@ -21,6 +21,16 @@ class BitsdojoWindowMacOS extends BitsdojoWindowPlatform {
   BitsdojoWindowMacOS() : super() {
     _channel.setMethodCallHandler(_handleMethodCall);
     _appWindow = MacOSWindow();
+  }
+
+  @override
+  void seedWindowIdentity({
+    String? name,
+    Map<String, dynamic>? arguments,
+    bool? isMainWindow, // ignored: macOS queries this per-handle natively
+  }) {
+    if (name != null) _appWindow.name = name;
+    if (arguments != null) _appWindow.arguments = arguments;
   }
 
   Future<void> _handleMethodCall(MethodCall call) async {
@@ -44,8 +54,12 @@ class BitsdojoWindowMacOS extends BitsdojoWindowPlatform {
 
         _appWindow.handle = handle;
         _appWindow.depth = depth;
-        _appWindow.name = name;
-        _appWindow.arguments = arguments;
+        if (name != null) {
+          _appWindow.name = name;
+        }
+        if (arguments != null) {
+          _appWindow.arguments = arguments;
+        }
         _windows[handle] = _appWindow;
 
         _isWindowReady = true;
@@ -55,6 +69,7 @@ class BitsdojoWindowMacOS extends BitsdojoWindowPlatform {
         }
         _pendingCallbacks.clear();
 
+        _appWindow.notifyWindowChanged();
         if (_appWindow.onArgumentsChanged != null) {
           _appWindow.onArgumentsChanged!();
         }
@@ -65,6 +80,7 @@ class BitsdojoWindowMacOS extends BitsdojoWindowPlatform {
             (call.arguments['arguments'] as Map?)?.cast<String, dynamic>();
         final window = getWindowForHandle(_handle!) as MacOSWindow;
         window.arguments = arguments;
+        window.notifyWindowChanged();
         if (window.onArgumentsChanged != null) {
           window.onArgumentsChanged!();
         }
@@ -81,9 +97,7 @@ class BitsdojoWindowMacOS extends BitsdojoWindowPlatform {
 
   @override
   void doWhenWindowReady(VoidCallback callback) {
-    _ambiguate(WidgetsBinding.instance)!
-        .waitUntilFirstFrameRasterized
-        .then((value) {
+    WidgetsBinding.instance.waitUntilFirstFrameRasterized.then((value) {
       if (_isWindowReady && _handle != null) {
         _ready(_handle!, callback);
       } else {
@@ -138,6 +152,11 @@ class BitsdojoWindowMacOS extends BitsdojoWindowPlatform {
       'x': position?.dx,
       'y': position?.dy,
       'arguments': arguments,
+      // Pre-encoded on the Dart side so the native layer can pass it through
+      // to --bdw-args verbatim. Re-encoding the codec Map with
+      // NSJSONSerialization would turn 1.0 into "1", flipping double->int
+      // when the child engine decodes it.
+      'argumentsJson': arguments != null ? jsonEncode(arguments) : null,
     });
   }
 }

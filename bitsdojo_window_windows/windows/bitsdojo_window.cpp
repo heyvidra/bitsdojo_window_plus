@@ -1,6 +1,7 @@
 #include "bitsdojo_window.h"
 #include "./bitsdojo_window_common.h"
 #include "./include/bitsdojo_window_windows/bitsdojo_window_plugin.h"
+#include "./include/bitsdojo_window_windows/multi_window_manager.h"
 #include "./window_util.h"
 #include <dwmapi.h>
 #include <math.h>
@@ -568,6 +569,10 @@ LRESULT CALLBACK main_window_proc(HWND window, UINT message, WPARAM wparam,
     break;
   }
   case WM_NCDESTROY: {
+    // The runner's OnWindowDestroyed call reaches us with a nulled HWND on the
+    // stock Win32Window template, so this subclass hook is the reliable place
+    // to release MultiWindowManager bookkeeping (message sender, name maps).
+    MultiWindowManager::GetInstance().OnWindowDestroyed(window);
     if (state) {
       RemoveProp(window, BDW_WINDOW_STATE);
       delete state;

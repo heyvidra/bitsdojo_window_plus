@@ -1,3 +1,8 @@
+## 0.3.0
+    - Child window processes are reaped on exit (no more zombie processes).
+    - Spawn environment is scrubbed of inherited BDW_* identity/geometry; unnamed grandchildren no longer inherit a stale route, unpositioned children are centered instead of pinned to the origin.
+    - Removed hardcoded MDK_* exports and unconditional software-GL; opt in with BDW_CHILD_WINDOW_SOFTWARE_RENDERING=1 where GL drivers require it.
+
 ## 0.2.0
     - Fixed a native memory leak when updating the window title.
     - Implemented `toggleFullScreen()` using GTK fullscreen APIs.

@@ -8,8 +8,6 @@ import './native_api.dart';
 
 export './window_interface.dart';
 
-T? _ambiguate<T>(T? value) => value;
-
 class BitsdojoWindowWindows extends BitsdojoWindowPlatform {
   static const MethodChannel _channel = MethodChannel('bitsdojo/window');
   final _windows = <int, WinWindow>{};
@@ -17,7 +15,20 @@ class BitsdojoWindowWindows extends BitsdojoWindowPlatform {
   int? _handle;
   bool _firstFrameRasterized = false;
   bool _didStartReadyWait = false;
+  bool _identitySeeded = false;
   late final WinWindow _appWindow;
+
+  @override
+  void seedWindowIdentity({
+    String? name,
+    Map<String, dynamic>? arguments,
+    bool? isMainWindow,
+  }) {
+    _identitySeeded = true;
+    if (name != null) _appWindow.name = name;
+    if (arguments != null) _appWindow.arguments = arguments;
+    if (isMainWindow != null) _appWindow.isMainWindow = isMainWindow;
+  }
 
   @override
   DesktopWindow getWindowForHandle(int handle) {
@@ -52,7 +63,9 @@ class BitsdojoWindowWindows extends BitsdojoWindowPlatform {
         }
 
         _appWindow.handle = handle;
-        _appWindow.name = name;
+        if (name != null) {
+          _appWindow.name = name;
+        }
         if (argumentsString != null) {
           try {
             _appWindow.arguments =
@@ -65,6 +78,7 @@ class BitsdojoWindowWindows extends BitsdojoWindowPlatform {
         _windows[handle] = _appWindow;
         _flushReadyCallbacks();
 
+        _appWindow.notifyWindowChanged();
         if (_appWindow.onArgumentsChanged != null) {
           _appWindow.onArgumentsChanged!();
         }
@@ -75,6 +89,7 @@ class BitsdojoWindowWindows extends BitsdojoWindowPlatform {
         try {
           final newArgs = jsonDecode(argumentsString) as Map<String, dynamic>;
           _appWindow.arguments = newArgs;
+          _appWindow.notifyWindowChanged();
           if (_appWindow.onArgumentsChanged != null) {
             _appWindow.onArgumentsChanged!();
           }
@@ -96,9 +111,7 @@ class BitsdojoWindowWindows extends BitsdojoWindowPlatform {
   void _ensureReadyWaitStarted() {
     if (_didStartReadyWait) return;
     _didStartReadyWait = true;
-    _ambiguate(WidgetsBinding.instance)!
-        .waitUntilFirstFrameRasterized
-        .then((value) {
+    WidgetsBinding.instance.waitUntilFirstFrameRasterized.then((value) {
       _firstFrameRasterized = true;
       _refreshHandleFromNative();
       _flushReadyCallbacks();
@@ -111,7 +124,9 @@ class BitsdojoWindowWindows extends BitsdojoWindowPlatform {
     if (handle == 0) return;
 
     _handle = handle;
-    _appWindow.isMainWindow = true;
+    if (!_identitySeeded) {
+      _appWindow.isMainWindow = true;
+    }
     _appWindow.handle = handle;
     _windows[handle] = _appWindow;
   }
