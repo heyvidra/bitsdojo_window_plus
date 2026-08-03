@@ -14,9 +14,9 @@ EXTERNAL SOURCES:
     :path: Flutter/ephemeral
 
 SPEC CHECKSUMS:
-  bitsdojo_window_macos: f4ad0a9fe65a5fefa59217d64fb4bdf38e5bb558
+  bitsdojo_window_macos: 1b26bd469725e5d9ed015c6d9eaabafda4718855
   FlutterMacOS: d0db08ddef1a9af05a5ec4b724367152bb0500b1
 
-PODFILE CHECKSUM: 54d867c82ac51cbd61b565781b9fada492027009
+PODFILE CHECKSUM: 1d8eaee4986bcb767f04b0baf73418528d0f2c5d
 
 COCOAPODS: 1.16.2
