@@ -112,12 +112,17 @@ static void method_call_cb(FlMethodChannel *channel, FlMethodCall *method_call,
         }
       }
 
+      bool has_x = false;
+      bool has_y = false;
+
       FlValue *x_val = fl_value_lookup_string(args, "x");
       if (x_val) {
         if (fl_value_get_type(x_val) == FL_VALUE_TYPE_FLOAT) {
           x = fl_value_get_float(x_val);
+          has_x = true;
         } else if (fl_value_get_type(x_val) == FL_VALUE_TYPE_INT) {
           x = (double)fl_value_get_int(x_val);
+          has_x = true;
         }
       }
 
@@ -125,13 +130,15 @@ static void method_call_cb(FlMethodChannel *channel, FlMethodCall *method_call,
       if (y_val) {
         if (fl_value_get_type(y_val) == FL_VALUE_TYPE_FLOAT) {
           y = fl_value_get_float(y_val);
+          has_y = true;
         } else if (fl_value_get_type(y_val) == FL_VALUE_TYPE_INT) {
           y = (double)fl_value_get_int(y_val);
+          has_y = true;
         }
       }
 
-      MultiWindowManager::GetInstance().OpenNewWindow(name, arguments, width,
-                                                      height, x, y);
+      MultiWindowManager::GetInstance().OpenNewWindow(
+          name, arguments, width, height, x, y, has_x && has_y);
       response = FL_METHOD_RESPONSE(fl_method_success_response_new(nullptr));
     }
   } else if (strcmp(method, "setAlwaysOnTop") == 0) {
@@ -244,8 +251,18 @@ void bitsdojo_window_configure_from_environment(GtkWindow *window) {
 
   gtk_window_set_default_size(window, width, height);
 
+  const char *depth_env = getenv("BDW_DEPTH");
+  bool is_child_window = depth_env && atoi(depth_env) > 0;
+
   if (x_str && y_str) {
     gtk_window_move(window, atoi(x_str), atoi(y_str));
+  } else if (is_child_window) {
+    // Child window with no position supplied: center instead of defaulting
+    // to the screen origin. Children only — the main window must keep
+    // WM-default placement (smart placement, session restore, tiling).
+    // Note: positioning/centering is X11-only; Wayland compositors ignore
+    // client-side placement.
+    gtk_window_set_position(window, GTK_WIN_POS_CENTER);
   }
 
   const char *depth_str = getenv("BDW_DEPTH");

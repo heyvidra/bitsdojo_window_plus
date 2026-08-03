@@ -37,7 +37,7 @@ void MultiWindowManager::SetDartEntrypointArguments(char **args) {
 
 void MultiWindowManager::OpenNewWindow(const char *name, const char *arguments,
                                        double width, double height, double x,
-                                       double y) {
+                                       double y, bool has_position) {
   char exePath[1024];
   ssize_t len = readlink("/proc/self/exe", exePath, sizeof(exePath) - 1);
   if (len != -1) {
@@ -71,10 +71,21 @@ void MultiWindowManager::OpenNewWindow(const char *name, const char *arguments,
   }
   envp = g_environ_unsetenv(envp, "FLUTTER_ENGINE_SWITCHES");
 
+  // Scrub inherited window identity/geometry: a child window process carries
+  // its own BDW_* values, so an unnamed/unpositioned grandchild would
+  // otherwise inherit them — wrong route (stale BDW_NAME/BDW_ARGS) and a
+  // stale position/size.
+  envp = g_environ_unsetenv(envp, "BDW_NAME");
+  envp = g_environ_unsetenv(envp, "BDW_ARGS");
+  envp = g_environ_unsetenv(envp, "BDW_X");
+  envp = g_environ_unsetenv(envp, "BDW_Y");
+  envp = g_environ_unsetenv(envp, "BDW_WIDTH");
+  envp = g_environ_unsetenv(envp, "BDW_HEIGHT");
+
   const char *currentDepthStr = g_environ_getenv(envp, "BDW_DEPTH");
   int currentDepth = currentDepthStr ? atoi(currentDepthStr) : 0;
   char depthStr[32];
-  sprintf(depthStr, "%d", currentDepth + 1);
+  snprintf(depthStr, sizeof(depthStr), "%d", currentDepth + 1);
   envp = g_environ_setenv(envp, "BDW_DEPTH", depthStr, TRUE);
 
   if (name) {
@@ -85,26 +96,31 @@ void MultiWindowManager::OpenNewWindow(const char *name, const char *arguments,
   }
 
   char widthStr[32], heightStr[32], xStr[32], yStr[32];
-  sprintf(widthStr, "%.f", width);
-  sprintf(heightStr, "%.f", height);
-  sprintf(xStr, "%.f", x);
-  sprintf(yStr, "%.f", y);
-  envp = g_environ_setenv(envp, "BDW_WIDTH", widthStr, TRUE);
-  envp = g_environ_setenv(envp, "BDW_HEIGHT", heightStr, TRUE);
-  envp = g_environ_setenv(envp, "BDW_X", xStr, TRUE);
-  envp = g_environ_setenv(envp, "BDW_Y", yStr, TRUE);
+  if (width > 0 && height > 0) {
+    snprintf(widthStr, sizeof(widthStr), "%.f", width);
+    snprintf(heightStr, sizeof(heightStr), "%.f", height);
+    envp = g_environ_setenv(envp, "BDW_WIDTH", widthStr, TRUE);
+    envp = g_environ_setenv(envp, "BDW_HEIGHT", heightStr, TRUE);
+  }
+  if (has_position) {
+    snprintf(xStr, sizeof(xStr), "%.f", x);
+    snprintf(yStr, sizeof(yStr), "%.f", y);
+    envp = g_environ_setenv(envp, "BDW_X", xStr, TRUE);
+    envp = g_environ_setenv(envp, "BDW_Y", yStr, TRUE);
+  }
 
-  // Force software decoding and rendering to avoid crashes on ARM64 systems
-  // missing HW acceleration libs (like libvdpau)
-  envp = g_environ_setenv(envp, "MDK_VIDEO_DECODERS", "FFmpeg", TRUE);
-  envp = g_environ_setenv(envp, "MDK_DECODER", "FFmpeg", TRUE);
-  envp = g_environ_setenv(envp, "MDK_HWDEC", "0", TRUE);
-  // Force software GL rendering if the hardware driver is causing crashes
-  envp = g_environ_setenv(envp, "LIBGL_ALWAYS_SOFTWARE", "1", TRUE);
-  // Force X11 backend as Wayland can be unstable with MDK on some ARM64 boards
-  envp = g_environ_setenv(envp, "GDK_BACKEND", "x11", TRUE);
-  // Enable verbose MDK logging
-  envp = g_environ_setenv(envp, "MDK_LOG", "2", TRUE);
+  // Opt-in workaround for boards whose GL drivers crash child windows (e.g.
+  // some ARM64 systems missing HW acceleration libs): export
+  // BDW_CHILD_WINDOW_SOFTWARE_RENDERING=1 in the parent environment to force
+  // software GL + the X11 backend for spawned windows. Never forced by
+  // default — software rendering is a large performance hit for everyone
+  // else.
+  const char *forceSoftware =
+      g_environ_getenv(envp, "BDW_CHILD_WINDOW_SOFTWARE_RENDERING");
+  if (forceSoftware && strcmp(forceSoftware, "1") == 0) {
+    envp = g_environ_setenv(envp, "LIBGL_ALWAYS_SOFTWARE", "1", TRUE);
+    envp = g_environ_setenv(envp, "GDK_BACKEND", "x11", TRUE);
+  }
   const char *disableA11y =
       g_environ_getenv(envp, "BDW_DISABLE_CHILD_WINDOW_ACCESSIBILITY");
   if (disableA11y && strcmp(disableA11y, "1") == 0) {

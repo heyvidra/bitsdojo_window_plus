@@ -250,20 +250,25 @@ public class MultiWindowManager {
     // MARK: - Internal Methods
     
     internal func handleWindowClose(_ window: NSWindow) {
-        closingWindowHandles.insert(window.windowNumber)
-        
+        // The willClose observer fires for EVERY NSWindow in the process
+        // (save panels, alerts, other plugins' windows) — only touch
+        // closingWindowHandles for windows this manager tracks, otherwise
+        // the set grows without bound over the app's lifetime.
+
         // Check if it's a secondary window
         if let bdwWindow = window as? BitsdojoWindow,
            secondaryWindows.contains(where: { $0 === bdwWindow }) {
-            // Remove from tracking
+            // Remove from tracking. Only drop the namedWindows entry if it
+            // still points at THIS window — a replacement window may have
+            // been created under the same name while this one was closing.
             secondaryWindows.removeAll(where: { $0 === bdwWindow })
-            if let name = bdwWindow.windowName {
+            if let name = bdwWindow.windowName, namedWindows[name] === bdwWindow {
                 namedWindows.removeValue(forKey: name)
             }
             closingWindowHandles.remove(window.windowNumber)
             return
         }
-        
+
         // Check if it's the primary window
         if window === primaryWindow {
             if shouldTerminateOnPrimaryClose {
@@ -297,7 +302,20 @@ public class MultiWindowManager {
     
     private func canReuseWindow(_ window: BitsdojoWindow) -> Bool {
         if closingWindowHandles.contains(window.windowNumber) {
-            return false
+            // markWindowClosing runs when a close is REQUESTED (before Dart's
+            // onClose interceptor decides). A vetoed close never fires
+            // willClose — and Dart sends no veto notification — so the mark
+            // would otherwise poison reuse of this named window forever.
+            // A window that is still on screen demonstrably survived the
+            // request; clear the stale mark. Known limitation: a close still
+            // being deliberated also passes this check — reusing (focus +
+            // args update) is benign there, and if the user then confirms
+            // the close the window simply closes as requested.
+            if window.isVisible || window.isMiniaturized {
+                closingWindowHandles.remove(window.windowNumber)
+            } else {
+                return false
+            }
         }
         if window.screen == nil {
             return false

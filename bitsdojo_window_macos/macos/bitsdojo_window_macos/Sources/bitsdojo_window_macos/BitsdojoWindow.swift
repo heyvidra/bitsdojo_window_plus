@@ -208,7 +208,11 @@ open class BitsdojoWindow: NSWindow {
        // before Flutter produces a fresh frame. Surfaces as the
        // intermittent "white flash" on Space swipes that NSWindow-level
        // sticky-clear backgroundColor alone can't suppress.
-       BitsdojoWindow.makeLayerTreeTransparent(flutterViewController.view.layer)
+       // Only needed for translucent windows; on opaque windows the walk
+       // would just cost Metal fill-rate for nothing.
+       if wantsTransparentBackground {
+         BitsdojoWindow.makeLayerTreeTransparent(flutterViewController.view.layer)
+       }
 
        // Plugin registration is handled by the window subclass (e.g. MainFlutterWindow).
     }

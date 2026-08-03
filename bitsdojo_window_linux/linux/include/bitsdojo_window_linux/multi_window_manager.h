@@ -10,8 +10,11 @@ public:
 
   void SetDartEntrypointArguments(char **args);
 
+  // has_position distinguishes "caller supplied x/y" from the 0,0 default —
+  // without it, unpositioned child windows are forced to the screen origin.
   void OpenNewWindow(const char *name, const char *arguments, double width,
-                     double height, double x, double y);
+                     double height, double x, double y,
+                     bool has_position = false);
 
 private:
   MultiWindowManager();

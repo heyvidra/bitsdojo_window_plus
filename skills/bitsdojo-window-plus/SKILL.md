@@ -299,7 +299,9 @@ Linux startup tips that bite people:
 - Only `gtk_window_present` immediately from `command_line` for an already-existing window. A brand-new child window should wait for first frame.
 - Give `FlView` a light background, not pure black — Flutter scaffolds may be transparent.
 
-`bitsdojo_window_configure_from_environment` restores child-window state from env vars set by the parent process; without it child windows open with wrong size/position.
+`bitsdojo_window_configure_from_environment` restores child-window state from env vars set by the parent process; without it child windows open with wrong size/position. Unpositioned child windows are centered; unsized ones default to 800x600. Positioning and centering are X11-only — Wayland compositors ignore client-side placement, so `openNewWindow(position: ...)` is a no-op there and the compositor decides.
+
+On boards whose GL drivers crash child windows (some ARM64 systems missing HW acceleration libs), export `BDW_CHILD_WINDOW_SOFTWARE_RENDERING=1` in the parent environment to force software GL + the X11 backend for spawned windows. This is opt-in — it is a large performance hit and must not be the default.
 
 ## Adding the dependency
 
