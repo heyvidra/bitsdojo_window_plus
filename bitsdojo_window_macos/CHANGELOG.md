@@ -1,3 +1,9 @@
+## 0.3.1
+    - Window geometry now uses one GLOBAL desktop coordinate space (primary screen top-left is (0,0), y down) across get/set/screen-info — fixes windows landing on the wrong display, mid-animation "flying", and save/restore re-basing on multi-monitor setups. Note: `position.dy` readings shift by the menu-bar height relative to prior versions (they now measure from the screen top); positions persisted by older versions restore slightly low.
+    - `size` setter keeps the top-left fixed (was AppKit bottom-left anchoring) and updates the frame cache synchronously, matching the animated resize path.
+    - Frame cache stays in sync on window moves and display rearrangement (new windowDidMove / screen-parameters observers); fixed a use-after-free reading FFI structs after return (NaN frame crash) and a double-dispatch that let a later resize apply before an earlier move.
+    - Restored positions that land on no attached display fall back to centering.
+
 ## 0.3.0
     - Secondary windows launch their engine with `--bdw-name=`/`--bdw-args=` dart entrypoint arguments (JSON pre-encoded on the Dart side for int/double fidelity).
     - Plugin registration on secondary engines is now guaranteed: synchronous window-class adoption, the new `MultiWindowManager.pluginRegistrant` hook, and a BitsdojoWindowPlugin fallback — no more MissingPluginException or leaked engines for plain windows.

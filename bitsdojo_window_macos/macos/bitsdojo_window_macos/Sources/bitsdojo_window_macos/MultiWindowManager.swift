@@ -171,9 +171,17 @@ public class MultiWindowManager {
         let parent = (NSApp.keyWindow as? BitsdojoWindow) ?? (primaryWindow as? BitsdojoWindow)
 
         if let position = position {
-            let targetScreen = parent?.screen ?? primaryWindow?.screen
-            let translatedPosition = translateDartPosition(position, on: targetScreen)
-            newWindow.setFrameTopLeftPoint(translatedPosition)
+            let translatedPosition = translateDartPosition(position)
+            let probe = NSRect(x: translatedPosition.x,
+                               y: translatedPosition.y - rect.size.height,
+                               width: rect.size.width, height: rect.size.height)
+            if NSScreen.screens.contains(where: { $0.frame.intersects(probe) }) {
+                newWindow.setFrameTopLeftPoint(translatedPosition)
+            } else {
+                // Saved on a monitor that is no longer attached: a window
+                // restored off every screen cannot even be dragged back.
+                newWindow.center()
+            }
         } else if NSScreen.main != nil {
             newWindow.center()
         }
@@ -323,12 +331,13 @@ public class MultiWindowManager {
         return window.isVisible || window.isMiniaturized
     }
 
-    private func translateDartPosition(_ position: NSPoint, on screen: NSScreen?) -> NSPoint {
-        guard let screen = screen ?? NSScreen.main ?? NSScreen.screens.first else {
-            return position
-        }
-        let visibleFrame = screen.visibleFrame
-        let topY = visibleFrame.origin.y + visibleFrame.size.height - position.y
+    /// Dart-side window coordinates are GLOBAL desktop coordinates (primary
+    /// screen's top-left is (0,0), y down). Always translate against the
+    /// PRIMARY screen; per-target-screen translation re-based saved
+    /// positions onto whatever screen the manager guessed.
+    private func translateDartPosition(_ position: NSPoint) -> NSPoint {
+        guard let primary = NSScreen.screens.first else { return position }
+        let topY = primary.frame.origin.y + primary.frame.size.height - position.y
         return NSPoint(x: position.x, y: topY)
     }
 }

@@ -123,9 +123,21 @@ void moveWindow(NSWindow *window) {
 }
 
 void setSize(NSWindow *window, int width, int height) {
-  NSRect frame = [window frame];
+  BitsdojoWindowController *controller = getControllerForWindow(window);
+  NSRect frame = (controller != nil) ? controller.windowFrame : [window frame];
+  // Keep the TOP-left fixed in the Dart (y-down) space: AppKit's origin is
+  // the bottom-left, so a height change must shift origin.y by the delta or
+  // the window's top edge moves (and drifts apart from the animated resize
+  // path, which anchors the top-left via setRectForWindow).
+  frame.origin.y += frame.size.height - height;
   frame.size.width = width;
   frame.size.height = height;
+  if (controller != nil) {
+    // Cache synchronously like setRect/setPosition, so reads before the
+    // main-queue apply see the new size and a stale live-frame read can't
+    // clobber a just-set origin.
+    controller.windowFrame = frame;
+  }
   dispatch_async(dispatch_get_main_queue(), ^{
     [window setFrame:frame display:true];
   });
@@ -153,6 +165,19 @@ void setMaxSize(NSWindow *window, int width, int height) {
   });
 }
 
+
+// Dart-side window coordinates are GLOBAL desktop coordinates: top-left of
+// the PRIMARY screen is (0,0), y grows downward, other screens extend the
+// plane (negative/overflow values are legal). Per-current-screen coordinates
+// made every save/restore and every cross-screen animation reinterpret its
+// numbers against whichever screen the window happened to be on -- measured
+// on a dual-display rig as windows sized for one screen landing on the
+// other and mid-animation reference switches ("flying").
+static CGFloat bdwPrimaryScreenTopY(void) {
+  NSScreen *primary = [NSScreen screens].firstObject; // origin (0,0) screen
+  return primary.frame.origin.y + primary.frame.size.height;
+}
+
 BDWStatus getScreenInfoForWindow(NSWindow *window, BDWScreenInfo *screenInfo) {
   BitsdojoWindowController *controller = getControllerForWindow(window);
   if (controller == nil) {
@@ -160,33 +185,50 @@ BDWStatus getScreenInfoForWindow(NSWindow *window, BDWScreenInfo *screenInfo) {
   }
   auto workingScreenRect = controller.workingScreenRect;
   auto fullScreenRect = controller.fullScreenRect;
-  auto menuBarHeight =
-      (fullScreenRect.origin.y + fullScreenRect.size.height) -
-      (workingScreenRect.origin.y + workingScreenRect.size.height);
+  CGFloat topY = bdwPrimaryScreenTopY();
   BDWRect *workingRect = screenInfo->workingRect;
   BDWRect *fullRect = screenInfo->fullRect;
-  workingRect->top = menuBarHeight;
-  workingRect->left = workingScreenRect.origin.x - fullScreenRect.origin.x;
-  workingRect->bottom = workingRect->top + workingScreenRect.size.height;
+  // Global space: alignment math done on these rects feeds straight into
+  // setRect/setPosition without any per-screen re-basing.
+  workingRect->left = workingScreenRect.origin.x;
+  workingRect->top =
+      topY - (workingScreenRect.origin.y + workingScreenRect.size.height);
   workingRect->right = workingRect->left + workingScreenRect.size.width;
-  fullRect->left = 0;
-  fullRect->right = fullScreenRect.size.width;
-  fullRect->top = 0;
-  fullRect->bottom = fullScreenRect.size.height;
+  workingRect->bottom = workingRect->top + workingScreenRect.size.height;
+  fullRect->left = fullScreenRect.origin.x;
+  fullRect->top = topY - (fullScreenRect.origin.y + fullScreenRect.size.height);
+  fullRect->right = fullRect->left + fullScreenRect.size.width;
+  fullRect->bottom = fullRect->top + fullScreenRect.size.height;
   return BDW_SUCCESS;
 }
 
 BDWStatus setPositionForWindow(NSWindow *window, BDWOffset *offset) {
-  runOnMainThread(^{
-    NSPoint position;
-    auto screen = [window screen];
-    auto fullScreenRect = [screen frame];
-    position.x = fullScreenRect.origin.x + offset->x;
-    position.y =
-        fullScreenRect.origin.y + fullScreenRect.size.height - offset->y;
-    dispatch_async(dispatch_get_main_queue(), ^{
-      [window setFrameTopLeftPoint:position];
-    });
+  // Copy the fields SYNCHRONOUSLY: the caller (Dart FFI) frees the struct
+  // when this function returns, and the blocks below run later on the main
+  // queue -- reading offset-> inside them is use-after-free (surfaced as a
+  // NaN frame crashing setFrameTopLeftPoint).
+  CGFloat offsetX = offset->x;
+  CGFloat offsetY = offset->y;
+  NSPoint position;
+  position.x = offsetX;
+  position.y = bdwPrimaryScreenTopY() - offsetY;
+  // Update the cached frame synchronously ON THE CALLING THREAD (matching
+  // setRectForWindow): getRectForWindow reads the cache, and a read between
+  // this call and the main-queue apply must see the new position. Wrapping
+  // this in runOnMainThread deferred the cache write too whenever the FFI
+  // call arrived off the main thread.
+  BitsdojoWindowController *controller = getControllerForWindow(window);
+  if (controller != nil) {
+    NSRect f = controller.windowFrame;
+    f.origin.x = position.x;
+    f.origin.y = position.y - f.size.height;
+    controller.windowFrame = f;
+  }
+  // Single dispatch hop, like setRect/setSize: the previous
+  // runOnMainThread + nested dispatch_async double-queued the apply, so a
+  // later single-hop resize could run FIRST and clobber this move.
+  dispatch_async(dispatch_get_main_queue(), ^{
+    [window setFrameTopLeftPoint:position];
   });
   return BDW_SUCCESS;
 }
@@ -197,13 +239,11 @@ BDWStatus setRectForWindow(NSWindow *window, BDWRect *rect) {
   if (controller == nil) {
     return BDW_FAILED;
   }
-  NSRect fullScreenRect = controller.fullScreenRect;
   NSRect frame;
   frame.size.width = rect->right - rect->left;
   frame.size.height = rect->bottom - rect->top;
-  frame.origin.x = fullScreenRect.origin.x + rect->left;
-  frame.origin.y =
-      fullScreenRect.origin.y + fullScreenRect.size.height - rect->bottom;
+  frame.origin.x = rect->left;
+  frame.origin.y = bdwPrimaryScreenTopY() - rect->bottom;
   controller.windowFrame = frame;
   dispatch_async(dispatch_get_main_queue(), ^{
     [window setFrame:frame display:YES];
@@ -216,14 +256,10 @@ BDWStatus getRectForWindow(NSWindow *window, BDWRect *rect) {
   if (controller == nil) {
     return BDW_FAILED;
   }
-  auto workingScreenRect = controller.workingScreenRect;
   NSRect frame = controller.windowFrame;
-  NSRect fullScreenRect = controller.fullScreenRect;
-  rect->left = frame.origin.x - fullScreenRect.origin.x;
+  rect->left = frame.origin.x;
   auto frameTop = frame.origin.y + frame.size.height;
-  auto workingScreenTop =
-      workingScreenRect.origin.y + workingScreenRect.size.height;
-  rect->top = workingScreenTop - frameTop;
+  rect->top = bdwPrimaryScreenTopY() - frameTop;
   rect->right = rect->left + frame.size.width;
   rect->bottom = rect->top + frame.size.height;
   return BDW_SUCCESS;

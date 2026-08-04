@@ -1,3 +1,7 @@
+## 0.3.1
+    - `WindowConfiguration.applyTo` applies alignment before size and clears the sticky anchor when the configuration resolves none, so reused windows no longer teleport to a stale anchor before their restored position lands.
+    - `animateTo(position:)` and the platform position setters now un-anchor the window (explicit position wins over sticky alignment); `WindowReadyAnimation` re-anchors after the pop-in completes so aligned configs keep re-centering on resize.
+
 ## 0.3.0
     - `runBitsdojoWindowApp`/`setupBitsdojoWindow` accept main's `args` and seed window identity from `--bdw-name=`/`--bdw-args=` entrypoint arguments, so `window.name`/`arguments` are correct before the first build (no windowReady race). Added `seedWindowIdentityFromArgs` and `withoutWindowIdentityArgs`.
     - `RoutedWindowHost` re-evaluates the route when the window's identity changes; child windows can no longer get stuck on the default route.

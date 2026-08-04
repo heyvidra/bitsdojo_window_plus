@@ -302,6 +302,9 @@ class GtkWindow extends DesktopWindow {
   set position(Offset newPosition) {
     if (!isValidHandle(handle, "set position")) return;
     if (!newPosition.dx.isFinite || !newPosition.dy.isFinite) return;
+    // An explicit position is an un-anchoring: a sticky alignment would
+    // teleport the window back to the old anchor on the next resize.
+    _alignment = null;
     // Save cached rect
     final double width = _cached.rect != null ? _cached.rect!.width : 0;
     final double height = _cached.rect != null ? _cached.rect!.height : 0;

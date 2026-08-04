@@ -45,6 +45,11 @@ NSComparisonResult ensureVisualEffectAtBottom(__kindof NSView *_Nonnull view1,
            selector:@selector(windowDidExitFullScreen:)
                name:NSWindowDidExitFullScreenNotification
              object:self.window];
+    [[NSNotificationCenter defaultCenter]
+        addObserver:self
+           selector:@selector(screenParametersDidChange:)
+               name:NSApplicationDidChangeScreenParametersNotification
+             object:nil];
 
     self.titleBarHeight = 28.0; // Default standard height
 
@@ -106,6 +111,22 @@ NSComparisonResult ensureVisualEffectAtBottom(__kindof NSView *_Nonnull view1,
     [self setupWindowRects];
     self.windowSize = self.window.frame.size;
   }
+}
+
+- (void)windowDidMove:(NSNotification *)notification {
+  // Without this, the windowFrame cache only refreshes on resize/screen
+  // changes: user drags and programmatic moves left stale positions behind,
+  // and a queued windowDidResize could clobber setPositionForWindow's eager
+  // cache write with the pre-move frame. Every real frame change must
+  // reconcile the cache with reality.
+  [self setupWindowRects];
+}
+
+- (void)screenParametersDidChange:(NSNotification *)notification {
+  // Display rearrangement re-bases AppKit's global coordinate space; cached
+  // screen rects must never come from a different configuration than the
+  // live primary-screen query used to convert them.
+  [self onScreenChange];
 }
 
 - (void)handleWindowChanges {
