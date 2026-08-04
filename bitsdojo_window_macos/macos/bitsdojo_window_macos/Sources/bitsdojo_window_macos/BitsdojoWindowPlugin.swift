@@ -139,9 +139,32 @@ public class BitsdojoWindowPlugin: NSObject, FlutterPlugin {
               BitsdojoWindowPlugin.isAppActive = false
               BitsdojoWindowPlugin.recalculateLifecycle()
           }
+          // Revive every window's presentation after the screens wake.
+          // A long display sleep (hours, or a sleep that reconfigures an
+          // external monitor) can leave a BACKGROUND window's CAMetalLayer
+          // presenting a stale surface: the Flutter engine keeps producing
+          // frames, Dart timers and input handling keep running, but the
+          // window never shows a new pixel. Field diagnosis on a real rig:
+          // the player window "froze" after a paused night — while its
+          // playback position was demonstrably advancing in the database
+          // and hover/click handlers were firing invisibly. The focused
+          // window recovers via its own focus events; unfocused windows
+          // never get any kick. Force one: a 1pt frame jiggle drives the
+          // engine through a full metrics -> render -> present cycle,
+          // which re-creates the drawables. Imperceptible during the
+          // wake transition; skipped for miniaturized windows.
+          let screensWokeObserver = NSWorkspace.shared.notificationCenter.addObserver(
+              forName: NSWorkspace.screensDidWakeNotification, object: nil, queue: nil) { _ in
+              // Give the WindowServer a beat to finish display reconfiguration
+              // (external monitors re-attach asynchronously after wake).
+              DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                  BitsdojoWindowPlugin.revivePresentationOfAllWindows()
+              }
+          }
           BitsdojoWindowPlugin.globalObserverTokens = [
             didBecomeActiveObserver,
             didResignActiveObserver,
+            screensWokeObserver,
           ]
            // Initialize app active state
           BitsdojoWindowPlugin.isAppActive = NSApp.isActive
@@ -236,6 +259,29 @@ public class BitsdojoWindowPlugin: NSObject, FlutterPlugin {
       let work = DispatchWorkItem { performLifecycleRecalculation() }
       lifecycleDebounceWorkItem = work
       DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: work)
+  }
+
+  /// Forces each tracked window's Flutter view through a full
+  /// metrics -> render -> present cycle by nudging the window frame 1pt
+  /// and restoring it. See the screensDidWake observer for why: after a
+  /// long display sleep an unfocused window's Metal presentation can be
+  /// permanently stale while the engine behind it runs fine.
+  private static func revivePresentationOfAllWindows() {
+      let keys = instances.keyEnumerator()
+      while let window = keys.nextObject() as? NSWindow {
+          guard window.isVisible, !window.isMiniaturized else { continue }
+          // Re-assert the layer contract first (contentsScale can be stale
+          // after a monitor with a different scale factor came back).
+          if let flutterVC = window.contentViewController as? FlutterViewController {
+              flutterVC.view.layer?.contentsScale = window.backingScaleFactor
+              flutterVC.view.needsDisplay = true
+          }
+          var frame = window.frame
+          frame.size.width += 1
+          window.setFrame(frame, display: true)
+          frame.size.width -= 1
+          window.setFrame(frame, display: true)
+      }
   }
 
   private static func performLifecycleRecalculation() {
