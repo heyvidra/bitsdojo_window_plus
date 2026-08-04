@@ -1,3 +1,6 @@
+## 0.3.2
+    - Window presentation is revived after the screens wake: a long display sleep (or one that reconfigures an external monitor) could leave an unfocused window's CAMetalLayer presenting a stale surface forever — the engine and Dart side kept running (input handled, timers firing) but the window never showed a new pixel. On NSWorkspace.screensDidWakeNotification every visible tracked window is nudged 1pt and restored, driving a full metrics→render→present cycle that re-creates the drawables; contentsScale is re-asserted first for monitors that return at a different scale factor.
+
 ## 0.3.1
     - Window geometry now uses one GLOBAL desktop coordinate space (primary screen top-left is (0,0), y down) across get/set/screen-info — fixes windows landing on the wrong display, mid-animation "flying", and save/restore re-basing on multi-monitor setups. Note: `position.dy` readings shift by the menu-bar height relative to prior versions (they now measure from the screen top); positions persisted by older versions restore slightly low.
     - `size` setter keeps the top-left fixed (was AppKit bottom-left anchoring) and updates the frame cache synchronously, matching the animated resize path.
