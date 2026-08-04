@@ -83,6 +83,13 @@ class MacOSWindow extends DesktopWindow {
   }
 
   set position(Offset newPosition) {
+    // An explicit position is an un-anchoring: a sticky alignment would
+    // teleport the window back to the old anchor on the next resize.
+    _alignment = null;
+    _setPositionNative(newPosition);
+  }
+
+  void _setPositionNative(Offset newPosition) {
     if (!isValidHandle(handle, "set position")) return;
     setPositionForWindow(handle!, newPosition);
   }
@@ -99,12 +106,14 @@ class MacOSWindow extends DesktopWindow {
       }
       final windowRect =
           getRectOnScreen(this.size, _alignment!, screenInfo.workingRect!);
-      final menuBarHeight = screenInfo.workingRect!.top;
-      // We need to subtract menuBarHeight because .position uses
-      // setFrameTopLeftPoint internally and that needs an offset
-      // relative to the start of the working rectangle (after the menu bar)
-      final positionToSet = windowRect.topLeft.translate(0, -menuBarHeight);
-      this.position = positionToSet;
+      // workingRect and the position setter share one space now (distance
+      // from the full screen top), so the topLeft feeds through unchanged.
+      // The old -menuBarHeight fudge compensated for setters and getters
+      // living in different spaces; with the native getter unified it would
+      // lift every aligned window a menu bar height too high.
+      // Raw native call: the public position setter would clear the anchor
+      // we just set.
+      _setPositionNative(windowRect.topLeft);
     }
   }
 

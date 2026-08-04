@@ -1,3 +1,6 @@
+## 0.3.1
+    - The position setter un-anchors the window (explicit position wins over sticky alignment on subsequent resizes).
+
 ## 0.3.0
     - Per-window cleanup now runs from the plugin's own WM_NCDESTROY hook, fixing MultiWindowManager bookkeeping that silently leaked (the stock runner template nulls the HWND before OnDestroy).
     - `CloseWindow` no longer holds a map iterator across DestroyWindow (undefined behavior once re-entrant cleanup works).

@@ -38,6 +38,12 @@ class WindowReadyAnimation {
   Future<void> apply(DesktopWindow window) async {
     if (!enabled) return;
 
+    // Capture the anchor before any mutation: both the explicit position
+    // set below and animateTo(position:) un-anchor the window, but the
+    // pop-in targets exactly the aligned geometry the configuration just
+    // applied — the anchor must survive the animation so later resizes
+    // still re-align.
+    final anchor = window.alignment;
     final targetSize = window.size;
     final targetPosition = window.position;
     if (targetSize.width <= 0 || targetSize.height <= 0) {
@@ -67,7 +73,13 @@ class WindowReadyAnimation {
         size: targetSize,
         position: targetPosition,
         duration: duration,
-      ),
+      ).then((_) {
+        if (anchor != null) {
+          // The window now sits at the aligned geometry; re-assigning the
+          // anchor is a no-op move that restores resize re-alignment.
+          window.alignment = anchor;
+        }
+      }),
     );
   }
 }
@@ -155,6 +167,19 @@ class WindowConfiguration {
       window.title = resolvedTitle;
     }
 
+    // Alignment FIRST, and assigned unconditionally: the size setter
+    // re-anchors the window to the sticky alignment field, so applying size
+    // while a stale anchor from a previous applyTo/animation is still stored
+    // teleports the window (a reused player window jumped to center before
+    // its restored position could matter). A null resolution must CLEAR the
+    // anchor, not skip it.
+    final resolvedAlignment = await _resolve(
+      alignmentBuilder,
+      alignment,
+      window,
+    );
+    window.alignment = resolvedAlignment;
+
     final resolvedSize = await _resolve(sizeBuilder, size, window);
     if (resolvedSize != null) {
       window.size = resolvedSize;
@@ -165,15 +190,6 @@ class WindowConfiguration {
 
     final resolvedMaxSize = await _resolve(maxSizeBuilder, maxSize, window);
     window.maxSize = resolvedMaxSize;
-
-    final resolvedAlignment = await _resolve(
-      alignmentBuilder,
-      alignment,
-      window,
-    );
-    if (resolvedAlignment != null) {
-      window.alignment = resolvedAlignment;
-    }
 
     final resolvedTitleBarHeight = await _resolve(
       titleBarHeightBuilder,

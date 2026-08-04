@@ -1,3 +1,6 @@
+## 0.3.1
+    - The position setter un-anchors the window (explicit position wins over sticky alignment on subsequent resizes).
+
 ## 0.3.0
     - Child window processes are reaped on exit (no more zombie processes).
     - Spawn environment is scrubbed of inherited BDW_* identity/geometry; unnamed grandchildren no longer inherit a stale route, unpositioned children are centered instead of pinned to the origin.

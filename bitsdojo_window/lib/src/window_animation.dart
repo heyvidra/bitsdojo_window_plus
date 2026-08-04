@@ -23,6 +23,15 @@ extension DesktopWindowAnimation on DesktopWindow {
       return Future<void>.value();
     }
 
+    if (position != null) {
+      // An explicit position target is an un-anchoring. The alignment field
+      // is sticky (the size setter re-derives the window origin from it on
+      // every resize), so leaving a stale anchor here means the NEXT size
+      // change teleports the window back to the old alignment -- observed as
+      // a reopened window jumping to center/bottom-right before settling.
+      this.alignment = null;
+    }
+
     if (duration <= Duration.zero) {
       if (size != null) {
         this.size = size;

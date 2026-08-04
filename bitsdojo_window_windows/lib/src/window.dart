@@ -313,6 +313,9 @@ class WinWindow extends WinDesktopWindow {
 
   set position(Offset newPosition) {
     if (!isValidHandle(_hwnd, "set position")) return;
+    // An explicit position is an un-anchoring: a sticky alignment would
+    // teleport the window back to the old anchor on the next resize.
+    _alignment = null;
     SetWindowPos(_hwnd!, HWND(Pointer.fromAddress(0)), newPosition.dx.toInt(),
         newPosition.dy.toInt(), 0, 0, SWP_NOSIZE);
   }
