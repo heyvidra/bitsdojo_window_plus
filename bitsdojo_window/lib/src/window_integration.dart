@@ -128,34 +128,37 @@ class WindowEventListener extends StatefulWidget {
 }
 
 class _WindowEventListenerState extends State<WindowEventListener> {
+  /// The handlers this listener displaced, restored on dispose.
+  ///
+  /// Nesting is a SUPPORTED pattern, not a mistake: [RoutedWindowHost] mounts
+  /// an app-level listener, and a routed window (a player, a tool palette)
+  /// legitimately mounts its own inside it to take over close interception
+  /// for that window. This used to print a "replacing an existing handler"
+  /// warning on every such mount — flagging the architecture this package
+  /// itself sets up — and drop the outer handler permanently. The inner
+  /// listener now shadows the outer one and hands the slots back when it
+  /// unmounts.
+  VoidCallback? _previousOnClose;
+  VoidCallback? _previousOnArgumentsChanged;
+
   @override
   void initState() {
     super.initState();
-    assert(() {
-      if (appWindow.onClose != null || appWindow.onArgumentsChanged != null) {
-        debugPrint(
-          'bitsdojo_window: WindowEventListener is replacing an existing '
-          'onClose/onArgumentsChanged handler. These are single-slot '
-          'callbacks — mount only one listener (or use window.changes for '
-          'multi-listener notifications).',
-        );
-      }
-      return true;
-    }());
+    _previousOnClose = appWindow.onClose;
+    _previousOnArgumentsChanged = appWindow.onArgumentsChanged;
     appWindow.onClose = _handleCloseRequested;
     appWindow.onArgumentsChanged = _handleArgumentsChanged;
   }
 
   @override
   void dispose() {
-    // Only release the slots this listener still owns — a newer listener
-    // (e.g. two hosts briefly mounted during a route transition) may have
-    // replaced them, and nulling unconditionally would silently disable it.
+    // Only touch the slots this listener still owns — a newer listener may
+    // have shadowed THIS one in turn, and it will restore on its own dispose.
     if (appWindow.onClose == _handleCloseRequested) {
-      appWindow.onClose = null;
+      appWindow.onClose = _previousOnClose;
     }
     if (appWindow.onArgumentsChanged == _handleArgumentsChanged) {
-      appWindow.onArgumentsChanged = null;
+      appWindow.onArgumentsChanged = _previousOnArgumentsChanged;
     }
     super.dispose();
   }
