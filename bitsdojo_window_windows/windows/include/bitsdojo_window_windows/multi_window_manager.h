@@ -33,9 +33,22 @@ public:
   void SetWindowFactory(WindowFactory factory);
 
   /// Open a new window with the specified parameters
-  /// Called by the plugin when Dart requests a new window
+  /// Called by the plugin when Dart requests a new window.
+  ///
+  /// Creation is DEFERRED to the next message-loop turn. This method is
+  /// invoked from a MethodChannel handler — i.e. from inside the calling
+  /// engine's platform-message dispatch — and the factory builds a whole
+  /// FlutterViewController for the new engine. Constructing engine #2
+  /// re-entrantly inside engine #1's dispatch is exactly what the macOS
+  /// plugin defers to the next main-queue turn, and doing it inline on
+  /// Windows produced secondary windows whose view never presented a frame.
   void OpenNewWindow(const char *name, const char *arguments, double width,
                      double height, double x, double y);
+
+  /// The actual creation, run from the dispatch window's WndProc on a clean
+  /// stack. Public only for that WndProc; not part of the API.
+  void DoOpenNewWindow(const std::string &name, const std::string &arguments,
+                       int width, int height, int x, int y);
 
   /// Close a window by name
   void CloseWindow(const std::string &name);
@@ -75,6 +88,11 @@ private:
   /// Send updateArguments message to a window
   void SendArgumentsUpdate(HWND window, const char *arguments);
 
+  /// Lazily create the hidden message-only window that deferred opens are
+  /// posted to. Returns nullptr on failure (caller falls back to inline
+  /// creation).
+  HWND EnsureDispatchWindow();
+
   /// Window tracking: name -> HWND
   std::map<std::string, HWND> windows_;
 
@@ -89,6 +107,9 @@ private:
 
   /// Window factory callback
   WindowFactory window_factory_;
+
+  /// Hidden message-only window that deferred opens are posted to
+  HWND dispatch_window_ = nullptr;
 
   /// Mutex for thread safety
   std::recursive_mutex mutex_;
