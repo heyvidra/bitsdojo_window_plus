@@ -1,6 +1,7 @@
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:bitsdojo_window_platform_interface/bitsdojo_window_platform_interface.dart';
+import 'dart:async';
 import 'dart:convert';
 
 import './window.dart';
@@ -51,38 +52,7 @@ class BitsdojoWindowWindows extends BitsdojoWindowPlatform {
         window.close();
       }
     } else if (call.method == 'windowReady') {
-      final handle = call.arguments['handle'] as int?;
-      if (handle != null) {
-        _handle = handle;
-        final name = call.arguments['name'] as String?;
-        final argumentsString = call.arguments['arguments'] as String?;
-
-        final isPrimary = call.arguments['isPrimary'] as bool?;
-        if (isPrimary != null) {
-          _appWindow.isMainWindow = isPrimary;
-        }
-
-        _appWindow.handle = handle;
-        if (name != null) {
-          _appWindow.name = name;
-        }
-        if (argumentsString != null) {
-          try {
-            _appWindow.arguments =
-                jsonDecode(argumentsString) as Map<String, dynamic>;
-          } catch (e, st) {
-            debugPrint("bitsdojo_window: error decoding window arguments: $e\n$st");
-          }
-        }
-
-        _windows[handle] = _appWindow;
-        _flushReadyCallbacks();
-
-        _appWindow.notifyWindowChanged();
-        if (_appWindow.onArgumentsChanged != null) {
-          _appWindow.onArgumentsChanged!();
-        }
-      }
+      _applyWindowInfo(call.arguments);
     } else if (call.method == 'updateArguments') {
       final argumentsString = call.arguments as String?;
       if (argumentsString != null) {
@@ -100,10 +70,70 @@ class BitsdojoWindowWindows extends BitsdojoWindowPlatform {
     }
   }
 
+  /// Adopt this engine's window identity, from either delivery path: the
+  /// native `windowReady` push, or the Dart-initiated `getWindowInfo` pull.
+  void _applyWindowInfo(dynamic info) {
+    if (info is! Map) return;
+    final handle = info['handle'] as int?;
+    if (handle == null) return;
+
+    _handle = handle;
+    final name = info['name'] as String?;
+    final argumentsString = info['arguments'] as String?;
+
+    final isPrimary = info['isPrimary'] as bool?;
+    if (isPrimary != null) {
+      _appWindow.isMainWindow = isPrimary;
+    }
+
+    _appWindow.handle = handle;
+    if (name != null) {
+      _appWindow.name = name;
+    }
+    if (argumentsString != null) {
+      try {
+        _appWindow.arguments =
+            jsonDecode(argumentsString) as Map<String, dynamic>;
+      } catch (e, st) {
+        debugPrint("bitsdojo_window: error decoding window arguments: $e\n$st");
+      }
+    }
+
+    _windows[handle] = _appWindow;
+    _flushReadyCallbacks();
+
+    _appWindow.notifyWindowChanged();
+    if (_appWindow.onArgumentsChanged != null) {
+      _appWindow.onArgumentsChanged!();
+    }
+  }
+
+  bool _requestedWindowInfo = false;
+
+  /// Ask the native side which window this engine owns.
+  ///
+  /// The `windowReady` push fires during plugin registration — before this
+  /// handler exists — so it can be lost. The pull cannot: by the time Dart
+  /// code runs, the native side has long since captured the identity on the
+  /// plugin instance. Old native builds without `getWindowInfo` throw
+  /// MissingPluginException / PlatformException; both fall back to the
+  /// pre-existing paths.
+  Future<void> _requestWindowInfo() async {
+    if (_requestedWindowInfo || _handle != null) return;
+    _requestedWindowInfo = true;
+    try {
+      final info = await _channel.invokeMethod<dynamic>('getWindowInfo');
+      if (_handle == null) _applyWindowInfo(info);
+    } catch (_) {
+      // Older native side: rely on windowReady / getAppWindow as before.
+    }
+  }
+
   @override
   void doWhenWindowReady(VoidCallback callback) {
     _readyCallbacks.add(callback);
     _ensureReadyWaitStarted();
+    unawaited(_requestWindowInfo());
     _refreshHandleFromNative();
     _flushReadyCallbacks();
   }
@@ -113,6 +143,7 @@ class BitsdojoWindowWindows extends BitsdojoWindowPlatform {
     _didStartReadyWait = true;
     WidgetsBinding.instance.waitUntilFirstFrameRasterized.then((value) {
       _firstFrameRasterized = true;
+      unawaited(_requestWindowInfo());
       _refreshHandleFromNative();
       _flushReadyCallbacks();
     });
@@ -120,6 +151,12 @@ class BitsdojoWindowWindows extends BitsdojoWindowPlatform {
 
   void _refreshHandleFromNative() {
     if (_handle != null) return;
+    // The native getAppWindow() global names whichever window attached LAST,
+    // so in a multi-window app a secondary engine must never trust it: it
+    // would adopt another window's handle and unlock that window's
+    // can-be-shown gate while its own stayed hidden. A window whose identity
+    // was seeded as secondary waits for windowReady/getWindowInfo instead.
+    if (_identitySeeded && !_appWindow.isMainWindow) return;
     final handle = getAppWindow();
     if (handle == 0) return;
 

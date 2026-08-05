@@ -49,6 +49,14 @@ private:
   // The channel to send menu item activations on.
   std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>> channel_;
 
+  // This engine's window identity, captured at registration and served to
+  // Dart on request via `getWindowInfo`. The eager `windowReady` push fires
+  // during plugin registration — before Dart main has installed its channel
+  // handler — so it can be lost; a pull can't be.
+  bool is_primary_ = false;
+  std::string window_name_;
+  std::string window_arguments_;
+
   static std::map<HWND, BitsdojoWindowPlugin *> instances_;
 };
 
@@ -111,6 +119,12 @@ void BitsdojoWindowPlugin::RegisterWithRegistrar(
           flutter::EncodableValue(arguments);
     }
 
+    // Keep a copy on the instance for the Dart-initiated `getWindowInfo`
+    // handshake — the push below races Dart main and can be lost.
+    plugin->is_primary_ = isPrimary;
+    plugin->window_name_ = name;
+    plugin->window_arguments_ = arguments;
+
     if (!isPrimary) {
       plugin->channel_->InvokeMethod(
           "windowReady", std::make_unique<flutter::EncodableValue>(args));
@@ -154,7 +168,28 @@ void BitsdojoWindowPlugin::HandleMethodCall(
   HWND child_window = registrar_->GetView()->GetNativeWindow();
   HWND window = GetParent(child_window);
 
-  if (method_call.method_name().compare("dragAppWindow") == 0) {
+  if (method_call.method_name().compare("getWindowInfo") == 0) {
+    // THIS engine's window, derived from the registrar rather than from the
+    // process-global `flutter_window` — that global is overwritten by every
+    // attachMainWindow call, so with two engines it names whichever window
+    // attached LAST. The Dart side of a secondary engine that trusted it via
+    // getAppWindow() unlocked the wrong HWND's can-be-shown gate, and the
+    // player window stayed hidden forever.
+    flutter::EncodableMap info;
+    info[flutter::EncodableValue("handle")] =
+        flutter::EncodableValue((int64_t)window);
+    info[flutter::EncodableValue("isPrimary")] =
+        flutter::EncodableValue(is_primary_);
+    if (!window_name_.empty()) {
+      info[flutter::EncodableValue("name")] =
+          flutter::EncodableValue(window_name_);
+    }
+    if (!window_arguments_.empty()) {
+      info[flutter::EncodableValue("arguments")] =
+          flutter::EncodableValue(window_arguments_);
+    }
+    result->Success(flutter::EncodableValue(info));
+  } else if (method_call.method_name().compare("dragAppWindow") == 0) {
     bool callResult = bdwAPI->privateAPI->dragAppWindow(window);
     if (callResult) {
       result->Success();
