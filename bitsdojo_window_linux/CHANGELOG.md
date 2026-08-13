@@ -1,3 +1,6 @@
+## 0.4.0
+    - `hasWindow`/`closeWindow` degrade to their documented defaults (false / no-op): Linux multi-window launches a separate process per window, so there is no in-process registry to query or close through.
+
 ## 0.3.1
     - The position setter un-anchors the window (explicit position wins over sticky alignment on subsequent resizes).
 

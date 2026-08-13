@@ -1,3 +1,6 @@
+## 0.4.0
+    - Channel-exposed the existing `MultiWindowManager.closeWindow(named:)`/`getWindow(named:)` as `closeWindow`/`hasWindow`, and broadcast `windowClosed` to every remaining window's engine from the manager's willClose handling — fired only when the closing window is still the name's current holder.
+
 ## 0.3.2
     - Window presentation is revived after the screens wake: a long display sleep (or one that reconfigures an external monitor) could leave an unfocused window's CAMetalLayer presenting a stale surface forever — the engine and Dart side kept running (input handled, timers firing) but the window never showed a new pixel. On NSWorkspace.screensDidWakeNotification every visible tracked window is nudged 1pt and restored, driving a full metrics→render→present cycle that re-creates the drawables; contentsScale is re-asserted first for monitors that return at a different scale factor.
 

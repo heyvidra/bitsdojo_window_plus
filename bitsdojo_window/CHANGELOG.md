@@ -1,3 +1,6 @@
+## 0.4.0
+    - Window lifecycle by name: top-level `closeWindow(name)` closes a named window (no-op when absent), `hasWindow(name)` reports whether one exists, and the `onWindowClosed` callback fires in every remaining window's engine when a named window closes — however it closed. Previously the only cross-window verb was `openNewWindow`, so dismissing a window meant re-opening it with a payload asking it to close itself.
+
 ## 0.3.1
     - `WindowConfiguration.applyTo` applies alignment before size and clears the sticky anchor when the configuration resolves none, so reused windows no longer teleport to a stale anchor before their restored position lands.
     - `animateTo(position:)` and the platform position setters now un-anchor the window (explicit position wins over sticky alignment); `WindowReadyAnimation` re-anchors after the pop-in completes so aligned configs keep re-centering on resize.

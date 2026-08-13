@@ -1,3 +1,6 @@
+## 0.4.0
+    - Added `hasWindow(name)` (defaults to false), `closeWindow(name)` (defaults to a no-op) and the `onWindowClosed` callback slot to `BitsdojoWindowPlatform`. Defaults are graceful rather than throwing: "no such window" is the correct answer on platforms without multi-window support.
+
 ## 0.3.0
     - Added `DesktopWindow.changes` (multi-listener `Listenable`) and `notifyWindowChanged()` for windowReady/updateArguments notifications.
     - Added `BitsdojoWindowPlatform.seedWindowIdentity` for identity known at engine startup.
