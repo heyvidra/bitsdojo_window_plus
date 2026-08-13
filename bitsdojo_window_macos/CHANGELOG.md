@@ -1,3 +1,6 @@
+## 0.4.1
+    - Hide-on-startup can no longer permanently hide a shown window. The alpha-zeroing in `BitsdojoWindow.order()` used to re-fire on every later orderFront whenever `windowCanBeShown` read false, so a controller lost to a startup race left the window on screen at alpha 0 forever (shipped as Vidra 1.11.x's invisible desktop pet — CI-built binaries only). `showWindow` now latches `hasEverBeenShown` on the window and re-registers a missing controller; the zeroing branch respects the latch and NSLogs when it fires.
+
 ## 0.4.0
     - Channel-exposed the existing `MultiWindowManager.closeWindow(named:)`/`getWindow(named:)` as `closeWindow`/`hasWindow`, and broadcast `windowClosed` to every remaining window's engine from the manager's willClose handling — fired only when the closing window is still the name's current holder.
 

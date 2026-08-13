@@ -77,7 +77,26 @@ void runOnMainThread(dispatch_block_t block) {
 }
 
 void showWindow(NSWindow *window) {
+  // Self-heal: a window whose controller registration was lost or never
+  // happened (startup races in secondary engines) would otherwise take
+  // setWindowCanBeShown as a silent no-op — and the makeKeyAndOrderFront
+  // below would re-zero the alpha we just restored, permanently, via the
+  // hide-on-startup branch in BitsdojoWindow.order().
+  if (getControllerForWindow(window) == nil) {
+    NSLog(@"[bitsdojo] showWindow: no controller for %@ — self-healing",
+          window.title ?: @"<untitled>");
+    setAppWindow(window);
+  }
   setWindowCanBeShown(window, true);
+  // Latch "this window has been explicitly shown" on the window itself
+  // (KVC: the Swift class isn't visible from here). The order() override
+  // consults it so no later orderFront can ever re-hide a shown window,
+  // even if the controller lookup above failed too.
+  @try {
+    [window setValue:@YES forKey:@"hasEverBeenShown"];
+  } @catch (NSException *exception) {
+    // Not a BitsdojoWindow subclass: no hide-on-startup to latch away.
+  }
   runOnMainThread(^{
     if (![[NSApplication sharedApplication] isActive]) {
       [[NSApplication sharedApplication] activateIgnoringOtherApps:YES];

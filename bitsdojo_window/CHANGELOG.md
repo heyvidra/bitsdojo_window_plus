@@ -1,3 +1,6 @@
+## 0.4.1
+    - Version alignment with the 0.4.1 macOS hide-on-startup fix; no functional change in this package.
+
 ## 0.4.0
     - Window lifecycle by name: top-level `closeWindow(name)` closes a named window (no-op when absent), `hasWindow(name)` reports whether one exists, and the `onWindowClosed` callback fires in every remaining window's engine when a named window closes — however it closed. Previously the only cross-window verb was `openNewWindow`, so dismissing a window meant re-opening it with a payload asking it to close itself.
 

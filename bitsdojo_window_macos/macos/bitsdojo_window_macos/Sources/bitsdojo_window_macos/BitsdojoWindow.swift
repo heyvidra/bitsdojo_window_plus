@@ -81,6 +81,19 @@ open class BitsdojoWindow: NSWindow {
 
   private var isConfigured = false
   private var hideOnStartupFlag = false
+
+  /// Latched by the native `showWindow` (via KVC — ObjC can't see this
+  /// class) the first time Dart explicitly shows this window. Hide-on-startup
+  /// exists to mask the window BEFORE its first frame; once a show has been
+  /// requested it must never re-hide the window. Without the latch, the
+  /// zero-alpha branch in `order(_:relativeTo:)` re-fires on every later
+  /// orderFront (window reuse, focus) whenever `windowCanBeShown` reads
+  /// false — e.g. a controller lost to a registration race — and the window
+  /// goes permanently invisible with nothing left to restore it. Shipped as
+  /// exactly that: Vidra 1.11.x's desktop pet, present but alpha 0, only in
+  /// CI-built binaries whose startup interleaving differed from every dev
+  /// machine's.
+  @objc public var hasEverBeenShown = false
   
   /// Configures the window with bitsdojo_window settings.
   /// This must be called BEFORE setupFlutter() to ensure Flutter receives correct initial metrics.
@@ -129,11 +142,17 @@ open class BitsdojoWindow: NSWindow {
   }
   
   override public func order(_ place: NSWindow.OrderingMode, relativeTo otherWin: Int) {
-    // Apply hide-on-startup alpha if needed (must happen at order time)
-    if hideOnStartupFlag && !bdwPrivateAPI.windowCanBeShown(self) {
+    // Apply hide-on-startup alpha if needed (must happen at order time).
+    // Only until the first explicit show — see hasEverBeenShown.
+    if hideOnStartupFlag && !hasEverBeenShown && !bdwPrivateAPI.windowCanBeShown(self) {
+      // Rare and load-bearing enough to log: this is the one branch that
+      // can make a window invisible, and the 1.11.x pet went dark in a
+      // build environment nobody could reproduce locally.
+      NSLog("[bitsdojo] hide-on-startup zeroed alpha for '%@' (canBeShown=false)",
+            windowName ?? "<unnamed>")
       self.alphaValue = 0
     }
-    
+
     super.order(place, relativeTo: otherWin)
   }
 

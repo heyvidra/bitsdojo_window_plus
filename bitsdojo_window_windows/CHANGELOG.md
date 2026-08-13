@@ -1,3 +1,6 @@
+## 0.4.1
+    - Version alignment with the 0.4.1 macOS hide-on-startup fix; no functional change in this package.
+
 ## 0.4.0
     - Channel-exposed `MultiWindowManager::CloseWindow/GetWindow` as `closeWindow`/`hasWindow`, and broadcast `windowClosed` via per-window closed notifiers. The broadcast fires from both close paths — `CloseWindow` erases the name mapping before `DestroyWindow`, so it announces the close itself, while user-initiated closes announce from `OnWindowDestroyed`; the two can never double-fire for one close.
 

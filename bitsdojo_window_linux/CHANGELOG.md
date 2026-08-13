@@ -1,3 +1,6 @@
+## 0.4.1
+    - Version alignment with the 0.4.1 macOS hide-on-startup fix; no functional change in this package.
+
 ## 0.4.0
     - `hasWindow`/`closeWindow` degrade to their documented defaults (false / no-op): Linux multi-window launches a separate process per window, so there is no in-process registry to query or close through.
 
