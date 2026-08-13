@@ -190,6 +190,30 @@ void MultiWindowManager::RegisterMessageSender(HWND window,
   message_senders_[window] = sender;
 }
 
+void MultiWindowManager::RegisterClosedNotifier(HWND window,
+                                                ClosedNotifier notifier) {
+  std::lock_guard<std::recursive_mutex> lock(mutex_);
+  closed_notifiers_[window] = notifier;
+}
+
+void MultiWindowManager::NotifyWindowClosed(const std::string &name,
+                                            HWND closed_window) {
+  // Copy under the lock, invoke outside it: a notifier runs Dart code that
+  // can call straight back into this manager.
+  std::vector<ClosedNotifier> to_notify;
+  {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    for (const auto &[window, notifier] : closed_notifiers_) {
+      if (window != closed_window && IsWindow(window)) {
+        to_notify.push_back(notifier);
+      }
+    }
+  }
+  for (const auto &notifier : to_notify) {
+    notifier(name.c_str());
+  }
+}
+
 void MultiWindowManager::CloseWindow(const std::string &name) {
   HWND hwnd = nullptr;
   {
@@ -209,6 +233,10 @@ void MultiWindowManager::CloseWindow(const std::string &name) {
   if (IsWindow(hwnd)) {
     DestroyWindow(hwnd);
   }
+
+  // The mapping was erased above, so OnWindowDestroyed cannot broadcast
+  // this close — do it here. Never double-fired for the same close.
+  NotifyWindowClosed(name, hwnd);
 }
 
 void MultiWindowManager::CloseAllWindows(HWND except_window) {
@@ -236,16 +264,27 @@ HWND MultiWindowManager::GetWindow(const std::string &name) {
 }
 
 void MultiWindowManager::OnWindowDestroyed(HWND window) {
-  std::lock_guard<std::recursive_mutex> lock(mutex_);
+  std::string closed_name;
+  {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
 
-  message_senders_.erase(window);
+    message_senders_.erase(window);
+    closed_notifiers_.erase(window);
 
-  // Find and remove from mappings
-  auto name_it = window_names_.find(window);
-  if (name_it != window_names_.end()) {
-    std::string name = name_it->second;
-    windows_.erase(name);
-    window_names_.erase(name_it);
+    // Find and remove from mappings
+    auto name_it = window_names_.find(window);
+    if (name_it != window_names_.end()) {
+      closed_name = name_it->second;
+      windows_.erase(closed_name);
+      window_names_.erase(name_it);
+    }
+  }
+
+  // A name still mapped here means the close was NOT initiated through
+  // CloseWindow (which erases the mapping and broadcasts itself) — the user
+  // closed it, or its own Dart did. Broadcast outside the lock.
+  if (!closed_name.empty()) {
+    NotifyWindowClosed(closed_name, window);
   }
 }
 

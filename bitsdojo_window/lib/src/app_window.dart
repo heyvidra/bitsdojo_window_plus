@@ -110,6 +110,22 @@ DesktopWindow get appWindow {
   return _platform.appWindow;
 }
 
+/// Whether a window opened under [name] currently exists anywhere in the
+/// process. False on platforms without multi-window support.
+Future<bool> hasWindow(String name) => _platform.hasWindow(name);
+
+/// Closes the window opened under [name]. A no-op when no such window
+/// exists — unlike re-calling `openNewWindow` with a dismiss payload, this
+/// can never summon a window just to close it.
+Future<void> closeWindow(String name) => _platform.closeWindow(name);
+
+/// Called in THIS window's engine whenever a named window elsewhere in the
+/// process closes, however it closed. The closing window's own engine dies
+/// with it, so it never hears about itself.
+void Function(String name)? get onWindowClosed => _platform.onWindowClosed;
+set onWindowClosed(void Function(String name)? handler) =>
+    _platform.onWindowClosed = handler;
+
 DesktopWindow getWindowForHandle(int handle) {
   return _platform.getWindowForHandle(handle);
 }

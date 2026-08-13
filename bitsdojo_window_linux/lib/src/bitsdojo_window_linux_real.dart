@@ -109,4 +109,13 @@ class BitsdojoWindowLinux extends BitsdojoWindowPlatform {
       'visible': visible,
     });
   }
+
+  // Linux "multi-window" launches a separate PROCESS per window (BDW_* env
+  // vars) — there is no in-process registry to query or close through, so
+  // these degrade to their documented defaults.
+  @override
+  Future<bool> hasWindow(String name) async => false;
+
+  @override
+  Future<void> closeWindow(String name) async {}
 }

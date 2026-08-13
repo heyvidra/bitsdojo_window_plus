@@ -137,6 +137,18 @@ void BitsdojoWindowPlugin::RegisterWithRegistrar(
               "updateArguments",
               std::make_unique<flutter::EncodableValue>(args ? args : ""));
         });
+
+    // Register the closed-window notifier: this engine hears about every
+    // OTHER named window that closes.
+    MultiWindowManager::GetInstance().RegisterClosedNotifier(
+        window, [plugin_pointer = plugin.get()](const char *name) {
+          flutter::EncodableMap payload;
+          payload[flutter::EncodableValue("name")] =
+              flutter::EncodableValue(name ? name : "");
+          plugin_pointer->channel_->InvokeMethod(
+              "windowClosed",
+              std::make_unique<flutter::EncodableValue>(payload));
+        });
   }
 
   plugin->channel_->SetMethodCallHandler(
@@ -251,6 +263,35 @@ void BitsdojoWindowPlugin::HandleMethodCall(
     } else {
       result->Error("INVALID_ARGUMENTS", "Expected EncodableMap");
     }
+  } else if (method_call.method_name().compare("hasWindow") == 0) {
+    auto args = std::get_if<flutter::EncodableMap>(method_call.arguments());
+    std::string name_str;
+    if (args) {
+      auto name_it = args->find(flutter::EncodableValue("name"));
+      if (name_it != args->end() &&
+          std::holds_alternative<std::string>(name_it->second)) {
+        name_str = std::get<std::string>(name_it->second);
+      }
+    }
+    HWND named = name_str.empty()
+                     ? nullptr
+                     : MultiWindowManager::GetInstance().GetWindow(name_str);
+    result->Success(
+        flutter::EncodableValue(named != nullptr && IsWindow(named)));
+  } else if (method_call.method_name().compare("closeWindow") == 0) {
+    auto args = std::get_if<flutter::EncodableMap>(method_call.arguments());
+    std::string name_str;
+    if (args) {
+      auto name_it = args->find(flutter::EncodableValue("name"));
+      if (name_it != args->end() &&
+          std::holds_alternative<std::string>(name_it->second)) {
+        name_str = std::get<std::string>(name_it->second);
+      }
+    }
+    if (!name_str.empty()) {
+      MultiWindowManager::GetInstance().CloseWindow(name_str);
+    }
+    result->Success();
   } else if (method_call.method_name().compare("terminateApp") == 0) {
     // Terminate the app by destroying the window.
     // This allows OnDestroy to run (cleaning up Flutter controller) while

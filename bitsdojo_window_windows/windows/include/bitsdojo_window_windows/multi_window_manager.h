@@ -62,6 +62,9 @@ public:
   /// Called when a window is destroyed to clean up tracking
   void OnWindowDestroyed(HWND window);
 
+  /// Invokes every OTHER window's closed notifier for [name].
+  void NotifyWindowClosed(const std::string &name, HWND closed_window);
+
   /// Register a window with its name for tracking
   void RegisterWindow(HWND window, const std::string &name);
 
@@ -76,6 +79,10 @@ public:
   /// Register a callback to send messages to a window
   using MessageSender = std::function<void(const char *arguments)>;
   void RegisterMessageSender(HWND window, MessageSender sender);
+
+  /// Called in a window's engine when a DIFFERENT named window closes.
+  using ClosedNotifier = std::function<void(const char *name)>;
+  void RegisterClosedNotifier(HWND window, ClosedNotifier notifier);
 
 private:
   MultiWindowManager() = default;
@@ -101,6 +108,9 @@ private:
 
   /// Message senders: HWND -> callback
   std::map<HWND, MessageSender> message_senders_;
+
+  /// Closed-window notifiers: HWND -> callback
+  std::map<HWND, ClosedNotifier> closed_notifiers_;
 
   /// Pending info for windows under construction, consumed by registrar order
   std::deque<PendingWindowInfo> pending_windows_;

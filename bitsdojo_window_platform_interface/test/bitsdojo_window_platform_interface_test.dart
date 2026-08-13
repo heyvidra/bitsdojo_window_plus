@@ -149,6 +149,24 @@ void main() {
       expect(BitsdojoWindowPlatform.instance, same(fake));
     });
 
+    test('hasWindow defaults to false — absence, not an error', () async {
+      expect(await FakePlatform().hasWindow('pet'), isFalse);
+    });
+
+    test('closeWindow defaults to a completed no-op', () async {
+      await FakePlatform().closeWindow('pet');
+    });
+
+    test('onWindowClosed is settable and clearable', () {
+      final platform = FakePlatform();
+      String? seen;
+      platform.onWindowClosed = (name) => seen = name;
+      platform.onWindowClosed?.call('pet');
+      expect(seen, 'pet');
+      platform.onWindowClosed = null;
+      expect(platform.onWindowClosed, isNull);
+    });
+
     test('doWhenWindowReady calls callback synchronously in fake', () {
       final fake = FakePlatform();
       bool called = false;

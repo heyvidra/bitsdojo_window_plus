@@ -53,6 +53,11 @@ class BitsdojoWindowWindows extends BitsdojoWindowPlatform {
       }
     } else if (call.method == 'windowReady') {
       _applyWindowInfo(call.arguments);
+    } else if (call.method == 'windowClosed') {
+      final name = (call.arguments as Map?)?['name'] as String?;
+      if (name != null) {
+        onWindowClosed?.call(name);
+      }
     } else if (call.method == 'updateArguments') {
       final argumentsString = call.arguments as String?;
       if (argumentsString != null) {
@@ -213,5 +218,16 @@ class BitsdojoWindowWindows extends BitsdojoWindowPlatform {
       'y': position?.dy,
       'arguments': arguments != null ? jsonEncode(arguments) : null,
     });
+  }
+
+  @override
+  Future<bool> hasWindow(String name) async {
+    return await _channel.invokeMethod<bool>('hasWindow', {'name': name}) ??
+        false;
+  }
+
+  @override
+  Future<void> closeWindow(String name) async {
+    await _channel.invokeMethod('closeWindow', {'name': name});
   }
 }

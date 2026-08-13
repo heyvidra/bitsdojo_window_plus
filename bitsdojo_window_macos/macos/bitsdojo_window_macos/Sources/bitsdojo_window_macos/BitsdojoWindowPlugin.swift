@@ -432,9 +432,36 @@ public class BitsdojoWindowPlugin: NSObject, FlutterPlugin {
             result(["handle": window.windowHandle])
         }
 
+    case "hasWindow":
+        let args = call.arguments as? [String: Any]
+        guard let name = args?["name"] as? String else {
+            result(false)
+            return
+        }
+        DispatchQueue.main.async {
+            result(MultiWindowManager.shared.getWindow(named: name) != nil)
+        }
+
+    case "closeWindow":
+        let args = call.arguments as? [String: Any]
+        guard let name = args?["name"] as? String else {
+            result(nil)
+            return
+        }
+        DispatchQueue.main.async {
+            MultiWindowManager.shared.closeWindow(named: name)
+            result(nil)
+        }
+
     default:
       result(FlutterMethodNotImplemented)
     }
+  }
+
+  /// Tells this window's Dart side that the named window elsewhere in the
+  /// process has closed.
+  public func notifyWindowClosed(_ name: String) {
+    channel.invokeMethod("windowClosed", arguments: ["name": name])
   }
 
   public func updateArguments(_ arguments: [String: Any]?) {

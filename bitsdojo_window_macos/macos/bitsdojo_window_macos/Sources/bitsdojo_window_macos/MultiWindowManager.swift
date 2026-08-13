@@ -272,6 +272,11 @@ public class MultiWindowManager {
             secondaryWindows.removeAll(where: { $0 === bdwWindow })
             if let name = bdwWindow.windowName, namedWindows[name] === bdwWindow {
                 namedWindows.removeValue(forKey: name)
+                // Tell every REMAINING window. Only when this window was
+                // still the name's current holder: a replacement window
+                // already created under the same name means the name is not
+                // actually gone from the user's point of view.
+                broadcastWindowClosed(name)
             }
             closingWindowHandles.remove(window.windowNumber)
             return
@@ -292,6 +297,19 @@ public class MultiWindowManager {
 
     internal func markWindowClosing(_ window: NSWindow) {
         closingWindowHandles.insert(window.windowNumber)
+    }
+
+    /// Notifies every remaining window's Dart engine that [name] closed.
+    /// The closing window's own engine is being torn down and is not told.
+    private func broadcastWindowClosed(_ name: String) {
+        var targets: [NSWindow] = []
+        if let primary = primaryWindow {
+            targets.append(primary)
+        }
+        targets.append(contentsOf: secondaryWindows)
+        for target in targets {
+            BitsdojoWindowPlugin.getPluginForWindow(target)?.notifyWindowClosed(name)
+        }
     }
     
     // MARK: - Private Methods

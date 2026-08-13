@@ -82,6 +82,23 @@ abstract class BitsdojoWindowPlatform extends PlatformInterface {
     throw UnimplementedError('openNewWindow() has not been implemented.');
   }
 
+  /// Whether a window opened under [name] currently exists.
+  ///
+  /// Defaults to false rather than throwing: callers use this to decide
+  /// whether to act on a window, and "no such window" is the correct answer
+  /// on platforms without multi-window support.
+  Future<bool> hasWindow(String name) async => false;
+
+  /// Closes the window opened under [name], if it exists. A no-op when it
+  /// does not — closing an absent window needs no error.
+  Future<void> closeWindow(String name) async {}
+
+  /// Called in this engine when a named window elsewhere in the process
+  /// closes — however it closed: [closeWindow], its own close button, or
+  /// `appWindow.close()` from its own Dart. The window's own engine is gone
+  /// by then, so it never receives this callback about itself.
+  void Function(String name)? onWindowClosed;
+
   void setAlwaysOnTop(bool onTop) {
     throw UnimplementedError('setAlwaysOnTop() has not been implemented.');
   }

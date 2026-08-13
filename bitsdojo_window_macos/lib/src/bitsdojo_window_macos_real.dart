@@ -74,6 +74,11 @@ class BitsdojoWindowMacOS extends BitsdojoWindowPlatform {
           _appWindow.onArgumentsChanged!();
         }
       }
+    } else if (call.method == 'windowClosed') {
+      final name = call.arguments['name'] as String?;
+      if (name != null) {
+        onWindowClosed?.call(name);
+      }
     } else if (call.method == 'argumentsChanged') {
       if (_handle != null) {
         final arguments =
@@ -158,5 +163,16 @@ class BitsdojoWindowMacOS extends BitsdojoWindowPlatform {
       // when the child engine decodes it.
       'argumentsJson': arguments != null ? jsonEncode(arguments) : null,
     });
+  }
+
+  @override
+  Future<bool> hasWindow(String name) async {
+    return await _channel.invokeMethod<bool>('hasWindow', {'name': name}) ??
+        false;
+  }
+
+  @override
+  Future<void> closeWindow(String name) async {
+    await _channel.invokeMethod('closeWindow', {'name': name});
   }
 }
