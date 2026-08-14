@@ -1,3 +1,6 @@
+## 0.4.2
+    - Traffic lights are no longer clipped to half their height on macOS 13 and older. A `bitsdojo_window_title_bar_height()` taller than the standard bar centres the buttons past the bottom edge of `NSTitlebarView`/`NSTitlebarContainerView`, which AppKit never grows; macOS 14+ stopped clipping subviews by default so the overflow rendered anyway, but older systems clip — exactly half of each 14pt button survived. Button repositioning now unclips both titlebar levels (`clipsToBounds` via selector — public on 14+, SPI before — plus the layer's `masksToBounds`), changing nothing about geometry or hit-testing on any version.
+
 ## 0.4.1
     - Hide-on-startup can no longer permanently hide a shown window. The alpha-zeroing in `BitsdojoWindow.order()` used to re-fire on every later orderFront whenever `windowCanBeShown` read false, so a controller lost to a startup race left the window on screen at alpha 0 forever (shipped as Vidra 1.11.x's invisible desktop pet — CI-built binaries only). `showWindow` now latches `hasEverBeenShown` on the window and re-registers a missing controller; the zeroing branch respects the latch and NSLogs when it fires.
 

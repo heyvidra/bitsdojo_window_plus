@@ -15,6 +15,27 @@ BitsdojoWindowController *getControllerForWindow(NSWindow *window);
 
 int _normalTitleBarHeight = 28;
 
+/// Stops [view] from clipping its subviews.
+///
+/// A titlebar taller than the standard bar centres the buttons PAST the
+/// bottom edge of NSTitlebarView/NSTitlebarContainerView, which AppKit
+/// never grows. macOS 14+ doesn't clip subviews by default, so the overflow
+/// renders anyway; macOS 13 and older clip — the lights lose their bottom
+/// half. `clipsToBounds` is public API on 14+ and existed as SPI before,
+/// so it's called through its selector: no availability guard to skip the
+/// exact versions that need it. The layer flag is belt-and-braces for
+/// layer-backed builds where AppKit derives masksToBounds from it.
++ (void)unclipView:(NSView *)view {
+  if (!view)
+    return;
+  SEL setClipsToBounds = NSSelectorFromString(@"setClipsToBounds:");
+  if ([view respondsToSelector:setClipsToBounds]) {
+    ((void (*)(id, SEL, BOOL))[view methodForSelector:setClipsToBounds])(
+        view, setClipsToBounds, NO);
+  }
+  view.layer.masksToBounds = NO;
+}
+
 + (void)showTitleBarButtonsForWindow:(NSWindow *)window {
   [self setButtonVisibility:YES forWindow:window];
 }
@@ -62,6 +83,16 @@ int _normalTitleBarHeight = 28;
       currentHeight = controller.titleBarHeight;
     }
   }
+  // The y-constraint below centres each button in `currentHeight`, but the
+  // native titlebar views stay at the standard bar height — a taller bar
+  // hangs the buttons out of their bounds, and macOS 13 and older clip
+  // (see unclipView:). Unclip both levels the buttons overflow into.
+  if (count > 0 && currentHeight > _normalTitleBarHeight) {
+    NSView *titlebarView = [buttons.firstObject superview];
+    [self unclipView:titlebarView];
+    [self unclipView:titlebarView.superview];
+  }
+
   // Calculate start X based on height: 30pt -> 12pt, 50pt -> 21pt
   CGFloat startX = 8.0;
   if (currentHeight > 28) {

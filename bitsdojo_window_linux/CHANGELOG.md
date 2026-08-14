@@ -1,3 +1,6 @@
+## 0.4.2
+    - Version alignment with the 0.4.2 macOS traffic-light clipping fix; no functional change in this package.
+
 ## 0.4.1
     - Version alignment with the 0.4.1 macOS hide-on-startup fix; no functional change in this package.
 
