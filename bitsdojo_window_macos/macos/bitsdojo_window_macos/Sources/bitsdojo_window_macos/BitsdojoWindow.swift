@@ -35,11 +35,22 @@ open class BitsdojoWindow: NSWindow {
 
   override public var isOpaque: Bool {
     get {
-      return false
+      // A translucent effect only works if the window reports non-opaque no
+      // matter what macOS resets it to mid-occlusion or mid-fullscreen; a
+      // window whose effect is disabled must answer honestly, because
+      // WindowServer only grants its opaque compositing fast path to
+      // windows that actually claim to be opaque.
+      return wantsTransparentBackground ? false : super.isOpaque
     }
     set {
-      // Ignore attempts to make it opaque to preserve Acrylic effect
-      super.isOpaque = false
+      if wantsTransparentBackground {
+        // Swallow attempts to make a translucent window opaque — macOS
+        // resets opacity to its default during occlusion and fullscreen
+        // transitions, which would break the Acrylic/Mica effect.
+        super.isOpaque = false
+      } else {
+        super.isOpaque = newValue
+      }
     }
   }
 
@@ -212,8 +223,14 @@ open class BitsdojoWindow: NSWindow {
        flutterViewController.view.layer?.contentsScale = self.backingScaleFactor
        flutterViewController.view.layer?.backgroundColor = NSColor.clear.cgColor
 
-       self.isOpaque = false
-       self.backgroundColor = .clear
+       // Window-level transparency belongs only to windows configured for
+       // a translucent effect; an effect-disabled window must keep
+       // NSWindow's opaque defaults or it never gets the WindowServer
+       // opaque fast path back.
+       if wantsTransparentBackground {
+         self.isOpaque = false
+         self.backgroundColor = .clear
+       }
 
        flutterViewController.view.needsLayout = true
        flutterViewController.view.layoutSubtreeIfNeeded()

@@ -15,7 +15,17 @@ NSComparisonResult ensureVisualEffectAtBottom(__kindof NSView *_Nonnull view1,
   return NSOrderedSame;
 }
 
-@implementation BitsdojoWindowController
+// 10 Hz for ~5 s — generously past any real fullscreen transition
+// (~0.5-0.7 s), so the deadline can only fire on a transition whose end
+// callbacks never arrived.
+static const NSUInteger kBdwFullScreenTransitionMaxTicks = 50;
+
+@implementation BitsdojoWindowController {
+  // Tick count for the fullscreen-transition poll timer; see
+  // enforceTransparencyDuringTransition for why the timer must be able to
+  // terminate itself.
+  NSUInteger _fullScreenTransitionTicks;
+}
 
 - (instancetype)initWithWindow:(NSWindow *)window {
   self = [super init];
@@ -186,7 +196,49 @@ static void bdwMakeLayerTreeTransparent(CALayer *layer) {
   }
 }
 
+/// Reverse of bdwMakeLayerTreeTransparent, for WindowEffect.disabled only.
+/// The transparent walk's `opaque = NO` writes are otherwise permanent, and
+/// CoreAnimation only grants the CAMetalLayer its no-blend fast path when
+/// the layer reports opaque again. Layers whose backgroundColor is NULL are
+/// left alone: the transparent walk never touched those (it only rewrites
+/// non-NULL colors), and handing them a background they never had could
+/// paint opaque rectangles over sibling content. Idempotent — every
+/// property is written only when it differs.
+static void bdwMakeLayerTreeOpaque(CALayer *layer, CGColorRef background) {
+  if (layer == nil) return;
+  if (!layer.opaque) {
+    layer.opaque = YES;
+  }
+  if (layer.backgroundColor != NULL &&
+      !CGColorEqualToColor(layer.backgroundColor, background)) {
+    layer.backgroundColor = background;
+  }
+  for (CALayer *sub in layer.sublayers) {
+    bdwMakeLayerTreeOpaque(sub, background);
+  }
+}
+
+/// Reads BitsdojoWindow.wantsTransparentBackground through dynamic dispatch
+/// (ObjC cannot see the Swift class). A window that does not expose the
+/// flag keeps the historical always-transparent treatment, because only a
+/// window that can opt out of background effects is safe to leave opaque.
+static BOOL bdwWindowWantsTransparentBackground(NSWindow *window) {
+  SEL selector = NSSelectorFromString(@"wantsTransparentBackground");
+  if (![window respondsToSelector:selector]) {
+    return YES;
+  }
+  return ((BOOL (*)(id, SEL))[window methodForSelector:selector])(window,
+                                                                  selector);
+}
+
 - (void)forceTransparency {
+  // Reserved for translucent windows: the occlusion and fullscreen handlers
+  // call this unconditionally, and on an effect-disabled window it would
+  // tear down the opaque WindowServer/CoreAnimation fast paths that
+  // applyBackgroundEffect's Disabled branch just restored.
+  if (!bdwWindowWantsTransparentBackground(self.window)) {
+    return;
+  }
   [self.window setOpaque:NO];
   [self.window setBackgroundColor:[NSColor clearColor]];
 
@@ -227,6 +279,23 @@ static void bdwMakeLayerTreeTransparent(CALayer *layer) {
 }
 
 - (void)enforceTransparencyDuringTransition {
+  // Belt-and-braces deadline: an OS-aborted fullscreen transition can skip
+  // both windowDid{Enter,Exit}FullScreen and the windowDidFailTo* delegate
+  // callbacks that stop this timer, and the timer retains this controller
+  // via target:, so without a hard stop it would poll at 10 Hz forever.
+  _fullScreenTransitionTicks += 1;
+  if (_fullScreenTransitionTicks > kBdwFullScreenTransitionMaxTicks) {
+    [self stopFullScreenTransitionMonitoring];
+    return;
+  }
+
+  // Mid-transition enforcement is only correct for translucent windows; an
+  // effect-disabled window must stay opaque, otherwise the transition
+  // exposes the desktop behind it.
+  if (!bdwWindowWantsTransparentBackground(self.window)) {
+    return;
+  }
+
   if ([self.window isOpaque]) {
     [self.window setOpaque:NO];
   }
@@ -290,6 +359,20 @@ static void bdwMakeLayerTreeTransparent(CALayer *layer) {
     if (![[window backgroundColor] isEqual:[NSColor windowBackgroundColor]])
       [window setBackgroundColor:[NSColor windowBackgroundColor]];
 
+    // The transparent layer walks (setupFlutter for custom-frame windows,
+    // forceTransparency for effect changes) leave every layer under the
+    // Flutter view non-opaque, and a non-opaque CAMetalLayer keeps
+    // CoreAnimation per-pixel blending the whole surface even under an
+    // opaque window. Reverse the walk here — and only here, because on a
+    // translucent window it would reintroduce the white flash on Spaces
+    // swipes that the transparent walk exists to prevent.
+    CGColorRef opaqueBackground = [[NSColor windowBackgroundColor] CGColor];
+    bdwMakeLayerTreeOpaque([contentView layer], opaqueBackground);
+    NSViewController *viewController = [window contentViewController];
+    if (viewController && [viewController view]) {
+      bdwMakeLayerTreeOpaque([[viewController view] layer], opaqueBackground);
+    }
+
     if (!([window styleMask] & NSWindowStyleMaskFullSizeContentView)) {
       if ([window titlebarAppearsTransparent])
         [window setTitlebarAppearsTransparent:NO];
@@ -320,7 +403,11 @@ static void bdwMakeLayerTreeTransparent(CALayer *layer) {
             setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
         [visualEffectView
             setBlendingMode:NSVisualEffectBlendingModeBehindWindow];
-        [visualEffectView setState:NSVisualEffectStateActive];
+        // FollowsWindowActiveState is stock macOS translucency behavior:
+        // Active would keep the behind-window blur re-sampling the desktop
+        // on every frame even while the app is not key.
+        [visualEffectView
+            setState:NSVisualEffectStateFollowsWindowActiveState];
 
         [visualEffectView setWantsLayer:YES];
         [contentView addSubview:visualEffectView
@@ -347,7 +434,7 @@ static void bdwMakeLayerTreeTransparent(CALayer *layer) {
       }
 
       [visualEffectView setMaterial:targetMaterial];
-      [visualEffectView setState:NSVisualEffectStateActive];
+      [visualEffectView setState:NSVisualEffectStateFollowsWindowActiveState];
       [visualEffectView setBlendingMode:NSVisualEffectBlendingModeBehindWindow];
 
       [CATransaction begin];
@@ -396,13 +483,17 @@ static void bdwMakeLayerTreeTransparent(CALayer *layer) {
   if (self.fullScreenTransitionTimer) {
     [self.fullScreenTransitionTimer invalidate];
   }
+  _fullScreenTransitionTicks = 0;
 
   // During the macOS fullscreen transition animation (~0.5-0.7 s)
   // the OS occasionally resets window opacity / background color
   // back to system defaults — which would expose a non-transparent
   // flash mid-transition for windows configured with a background
   // effect. We poll-enforce transparency at 10 fps for the duration
-  // of the transition and stop in windowDid{Enter,Exit}FullScreen.
+  // of the transition and stop in windowDid{Enter,Exit}FullScreen or
+  // windowDidFailTo{Enter,Exit}FullScreen; the tick deadline inside
+  // enforceTransparencyDuringTransition catches transitions that
+  // deliver none of those callbacks.
   //
   // The per-tick cost is small (one or two cheap NSWindow property
   // reads + maybe one set + a contentView.subviews scan), so the
@@ -479,6 +570,17 @@ static void bdwMakeLayerTreeTransparent(CALayer *layer) {
   [self applyBackgroundEffect:self.lastBackgroundEffect];
 
   [self.window setHasShadow:YES];
+}
+
+- (void)windowDidFailToEnterFullScreen:(NSWindow *)window {
+  // An OS-aborted transition delivers neither windowDidEnterFullScreen nor
+  // windowDidExitFullScreen — the only other places the 10 Hz poll timer
+  // gets stopped before its tick deadline.
+  [self stopFullScreenTransitionMonitoring];
+}
+
+- (void)windowDidFailToExitFullScreen:(NSWindow *)window {
+  [self stopFullScreenTransitionMonitoring];
 }
 
 - (void)windowDidChangeOcclusionState:(NSNotification *)notification {
