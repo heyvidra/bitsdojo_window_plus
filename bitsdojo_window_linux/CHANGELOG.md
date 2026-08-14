@@ -1,3 +1,6 @@
+## 0.4.3
+    - Version alignment with the 0.4.3 macOS launch-crash fix; no functional change in this package.
+
 ## 0.4.2
     - Version alignment with the 0.4.2 macOS traffic-light clipping fix; no functional change in this package.
 
