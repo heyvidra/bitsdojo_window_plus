@@ -486,6 +486,17 @@ class _MyHomePageState extends State<MyHomePage> {
                 'Bottom Right',
                 () => appWindow.alignment = Alignment.bottomRight,
               ),
+              // Bottom Left used to throw the window a full width off the left
+              // edge of the screen, and a non-named Alignment collapsed it to
+              // zero size at the origin. Both are here so the fix is testable.
+              _buildSmallAction(
+                'Bottom Left',
+                () => appWindow.alignment = Alignment.bottomLeft,
+              ),
+              _buildSmallAction(
+                'Custom (0, 0.5)',
+                () => appWindow.alignment = const Alignment(0, 0.5),
+              ),
               _buildSmallAction(
                 'Move +40/+40',
                 () => appWindow.position =
@@ -650,18 +661,29 @@ class _MyHomePageState extends State<MyHomePage> {
             'dialog on Windows/Linux. Open a child window and try it there.',
           ),
           const SizedBox(height: 8),
-          _buildButton(
-            icon: Icons.info_outline,
-            label: 'Native Alert',
-            onPressed: () async {
-              await showNativeAlert(
-                title: 'Native alert',
-                message: 'This one belongs to '
-                    '${appWindow.name ?? 'the main window'}.',
-              );
-              _reportNativeUI('alert dismissed');
-            },
+          // One button per alert style, so the three native icon treatments are
+          // all reachable (NSAlert style / MB_ICON* / GtkMessageType).
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              for (final style in NativeAlertStyle.values)
+                _buildSmallAction(
+                  'Alert: ${style.name}',
+                  () async {
+                    final index = await showNativeAlert(
+                      title: 'Native alert (${style.name})',
+                      message: 'This one belongs to '
+                          '${appWindow.name ?? 'the main window'}.',
+                      buttons: const ['Got it', 'Not now'],
+                      style: style,
+                    );
+                    _reportNativeUI('alert(${style.name}) -> button $index');
+                  },
+                ),
+            ],
           ),
+          const SizedBox(height: 12),
           _buildButton(
             icon: Icons.help_outline,
             label: 'Native Confirm',
@@ -703,6 +725,38 @@ class _MyHomePageState extends State<MyHomePage> {
               ),
             ),
           ),
+          const SizedBox(height: 8),
+          // The other ContextMenuRegion shape: itemsBuilder runs at click time,
+          // so the menu can depend on what was clicked.
+          ContextMenuRegion(
+            itemsBuilder: (position) => [
+              NativeMenuItem(
+                'where',
+                'Clicked at ${position.dx.toStringAsFixed(0)}, '
+                    '${position.dy.toStringAsFixed(0)}',
+                enabled: false,
+              ),
+              const NativeMenuItem.separator(),
+              const NativeMenuItem('top', 'Send window to top'),
+              const NativeMenuItem('bottom', 'Send window to bottom'),
+            ],
+            onSelected: (id) {
+              if (id == 'top') appWindow.alignment = Alignment.topCenter;
+              if (id == 'bottom') appWindow.alignment = Alignment.bottomCenter;
+              _reportNativeUI('dynamic menu: $id');
+            },
+            child: Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(vertical: 18),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(12),
+                color: Colors.indigo.withValues(alpha: 0.06),
+              ),
+              child: const Center(
+                child: Text('Right-click: menu built from the click position'),
+              ),
+            ),
+          ),
           const SizedBox(height: 12),
           _buildDataCard('Last Result', _lastNativeUIResult, Colors.indigo),
         ]),
@@ -723,27 +777,54 @@ class _MyHomePageState extends State<MyHomePage> {
             label: 'Refresh Displays',
             onPressed: _refreshDisplays,
           ),
-          for (final display in _displays)
+          for (final display in _displays) ...[
             _buildInlineStat(
               '${display.name}${display.isPrimary ? ' (primary)' : ''}',
               '${display.bounds.width.toStringAsFixed(0)}x'
                   '${display.bounds.height.toStringAsFixed(0)} @'
                   '${display.scaleFactor}x',
             ),
+            _buildInlineStat(
+              '  bounds / work area',
+              '${display.bounds.left.toStringAsFixed(0)},'
+                  '${display.bounds.top.toStringAsFixed(0)}  /  '
+                  '${display.workArea.left.toStringAsFixed(0)},'
+                  '${display.workArea.top.toStringAsFixed(0)}',
+            ),
+          ],
           if (_displays.isNotEmpty) ...[
             const SizedBox(height: 8),
-            _buildButton(
-              icon: Icons.open_in_new,
-              label: 'Move to Other Display',
-              onPressed: () {
-                // The whole point of enumerating displays: place a window on a
-                // monitor the user picked, not just "wherever".
-                final other = _displays.firstWhere(
-                  (d) => !d.bounds.contains(appWindow.position),
-                  orElse: () => _displays.first,
-                );
-                appWindow.position = other.workArea.topLeft;
-              },
+            _buildPlatformNote(
+              'Display coordinates share appWindow.position\'s space, so a '
+              'monitor above or left of the primary reports negatives.',
+            ),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (final display in _displays)
+                  _buildSmallAction(
+                    'Move to ${display.name}',
+                    // The point of enumerating displays: put the window on the
+                    // monitor the user picked, not just "wherever".
+                    () => appWindow.position = display.workArea.topLeft +
+                        const Offset(40, 40),
+                  ),
+                _buildSmallAction(
+                  'Center on primary',
+                  () {
+                    final primary = _displays.firstWhere((d) => d.isPrimary,
+                        orElse: () => _displays.first);
+                    final work = primary.workArea;
+                    final size = appWindow.size;
+                    appWindow.position = Offset(
+                      work.left + (work.width - size.width) / 2,
+                      work.top + (work.height - size.height) / 2,
+                    );
+                  },
+                ),
+              ],
             ),
           ],
         ]),
