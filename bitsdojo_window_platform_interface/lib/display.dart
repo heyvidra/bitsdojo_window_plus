@@ -1,10 +1,17 @@
+import 'dart:io' show Platform;
 import 'dart:ui' show Rect;
 
 /// One monitor attached to the machine.
 ///
-/// [bounds] and [workArea] are in logical pixels and share their coordinate
-/// space with `DesktopWindow.position`, so a window can be placed on a chosen
-/// display with `window.position = display.workArea.topLeft`.
+/// [bounds] and [workArea] share a coordinate space with
+/// `DesktopWindow.position` ON THE SAME PLATFORM — that is what they are for,
+/// and it is why their UNIT is not the same everywhere: device pixels on
+/// Windows, where `position` is GetWindowRect/SetWindowPos and neither scales,
+/// and logical pixels on macOS and Linux.
+///
+/// Anything comparing them against a coordinate of its own — a window position
+/// remembered across restarts, say — wants [logicalBounds] and
+/// [logicalWorkArea], which are logical pixels on every platform.
 class Display {
   const Display({
     required this.id,
@@ -28,6 +35,28 @@ class Display {
 
   final double scaleFactor;
   final bool isPrimary;
+
+  /// [bounds] in logical pixels on every platform.
+  Rect get logicalBounds => _toLogical(bounds);
+
+  /// [workArea] in logical pixels on every platform.
+  Rect get logicalWorkArea => _toLogical(workArea);
+
+  /// The platform split, resolved HERE so no caller has to carry it.
+  ///
+  /// It is not "divide by [scaleFactor]": that is right on Windows and wrong
+  /// on macOS, where the rects arrive as NSScreen points while [scaleFactor]
+  /// carries the Retina backing scale — dividing there would halve every
+  /// display on the machine and put most stored positions off-screen.
+  Rect _toLogical(Rect r) {
+    if (!Platform.isWindows || scaleFactor <= 0 || scaleFactor == 1.0) return r;
+    return Rect.fromLTRB(
+      r.left / scaleFactor,
+      r.top / scaleFactor,
+      r.right / scaleFactor,
+      r.bottom / scaleFactor,
+    );
+  }
 
   static Display? fromMap(Map<Object?, Object?> map) {
     final bounds = _rect(map, 'x', 'y', 'width', 'height');

@@ -1,3 +1,4 @@
+import 'dart:io' show Platform;
 import 'dart:async';
 
 import 'package:bitsdojo_window_platform_interface/bitsdojo_window_platform_interface.dart';
@@ -43,6 +44,28 @@ extension DesktopWindowAnimation on DesktopWindow {
         this.alignment = alignment;
       }
       return Future<void>.value();
+    }
+
+    // Windows repaints a resizing window through DWM, and one that is moving
+    // at the same time flashes its blank background while it does. The move
+    // alone is clean, so the resize is applied up front and only the travel is
+    // eased: the shape lands in a single frame instead of thirty, and nobody
+    // sees white.
+    //
+    // This lived in an app on top of the package until now, which meant every
+    // caller had to discover the flash for itself and hand-roll the split —
+    // including the DPI scaling that `set size` does correctly and a
+    // hand-rolled rect write has to repeat.
+    if (Platform.isWindows &&
+        size != null &&
+        (position != null || alignment != null)) {
+      this.size = size;
+      return animateTo(
+        position: position,
+        alignment: alignment,
+        duration: duration,
+        curve: curve,
+      );
     }
 
     final key = handle ?? identityHashCode(this);
@@ -128,7 +151,7 @@ class _WindowAnimationSession {
 
   Future<void> start() {
     _elapsed.start();
-    _coordinateScale = _resolveCoordinateScale(window);
+    _coordinateScale = window.coordinateScale;
     _initialPosition = _getLogicalPosition(window, _coordinateScale);
     _initialSize = window.size;
 
@@ -187,26 +210,6 @@ class _WindowAnimationSession {
       );
     }
   }
-}
-
-double _resolveCoordinateScale(DesktopWindow window) {
-  final logicalWidth = window.size.width;
-  final physicalWidth = window.rect.width;
-  if (logicalWidth <= 0 || physicalWidth <= 0) {
-    return 1;
-  }
-
-  final inferredScale = physicalWidth / logicalWidth;
-  if ((inferredScale - 1).abs() < 0.01) {
-    return 1;
-  }
-
-  if (window.scaleFactor > 0 &&
-      (inferredScale - window.scaleFactor).abs() < 0.05) {
-    return window.scaleFactor;
-  }
-
-  return inferredScale;
 }
 
 Offset _getLogicalPosition(DesktopWindow window, double coordinateScale) {

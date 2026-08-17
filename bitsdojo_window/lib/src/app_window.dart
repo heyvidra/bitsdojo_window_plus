@@ -106,6 +106,34 @@ void doWhenWindowReady(VoidCallback callback) {
   _platform.doWhenWindowReady(callback);
 }
 
+/// This engine's own window.
+///
+/// ## Where a thing lives, and why
+///
+/// Anything that acts on THIS window is a member here — `appWindow.close()`,
+/// `appWindow.rect`, `appWindow.alwaysOnTop`. Anything addressing the process
+/// or the machine is a top-level function instead, because there is no one
+/// window it belongs to: [hasWindow], [closeWindow], [getDisplays],
+/// [showNativeAlert], [showNativeConfirm], [showNativeMenu], [terminateApp].
+///
+/// So it is `getDisplays()`, never `appWindow.getDisplays()`. The compiler
+/// catches the mistake, but the shape is worth knowing first. ([showNativeMenu]
+/// is the one that reads oddly: it takes a position in THIS window's
+/// coordinates. It stays top-level with the other native-UI calls, which all
+/// reach the same platform channel.)
+///
+/// ## Sync or async
+///
+/// Acting on this window is synchronous and fire-and-forget: `close`,
+/// `minimize`, `maximize`, `restore`, `show`, `hide`, `startDragging` all
+/// return void. There is nothing to await — the platform is told, and the
+/// result arrives (if at all) as a [DesktopWindow.events] event.
+///
+/// Anything crossing to ANOTHER window or waiting on the user returns a
+/// Future: [closeWindow], [hasWindow], `openNewWindow`, `animateTo`, and every
+/// native-UI call. `await appWindow.close()` does not compile, and that
+/// asymmetry with `await closeWindow(name)` is the rule above, not an
+/// oversight.
 DesktopWindow get appWindow {
   return _platform.appWindow;
 }

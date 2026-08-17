@@ -290,8 +290,20 @@ class WinWindow extends WinDesktopWindow {
     Size sizeToSet = Size(width, height);
     _sizeSetFromDart = sizeToSet;
     if (_alignment == null) {
-      SetWindowPos(_hwnd!, HWND(Pointer.fromAddress(0)), 0, 0, sizeToSet.width.toInt(),
-          sizeToSet.height.toInt(), SWP_NOMOVE);
+      // Scaled, exactly as the aligned branch below scales: this setter takes
+      // LOGICAL pixels, because `get size` returns them (it divides the
+      // GetWindowRect result by scaleFactor). SetWindowPos speaks device
+      // pixels, so handing it the logical number unconverted made the two
+      // halves of this one setter disagree about its own unit — and made the
+      // identity `appWindow.size = appWindow.size` shrink the window by the
+      // DPI factor on every scaled display.
+      //
+      // The clamping above stays in logical units on purpose: minSize/maxSize
+      // are logical too, so the comparison is like-for-like and only the
+      // result crosses over.
+      final sizeOnScreen = getSizeOnScreen(sizeToSet);
+      SetWindowPos(_hwnd!, HWND(Pointer.fromAddress(0)), 0, 0,
+          sizeOnScreen.width.toInt(), sizeOnScreen.height.toInt(), SWP_NOMOVE);
     } else {
       final sizeOnScreen = getSizeOnScreen((sizeToSet));
       final screenRect = getScreenRectForWindow(_hwnd!);

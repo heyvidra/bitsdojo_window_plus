@@ -1,3 +1,8 @@
+## 0.5.1
+    - `animateTo` no longer flashes a blank window on Windows when it moves and resizes at once. DWM repaints a resizing window, and one that is also travelling shows its background while it does. The resize now lands in a single frame up front and only the travel is eased. This was previously left to callers to discover and hand-roll — including the DPI scaling that `set size` handles and a hand-rolled `rect` write has to repeat.
+    - The animation's private coordinate-scale derivation is now `DesktopWindow.coordinateScale`.
+    - `appWindow` documents the shape of this API: acting on THIS window is a member and synchronous, addressing the process or the machine is a top-level function and asynchronous. So it is `getDisplays()`, never `appWindow.getDisplays()`, and `await appWindow.close()` does not compile while `await closeWindow(name)` does.
+
 ## 0.5.0
     - **Breaking:** the SDK floor moves to Dart 3.0 / Flutter 3.10. The window event types below are a closed set worth `sealed`ing so a `switch` over them is checked for exhaustiveness, and that needs Dart 3. The floor is the minimum the feature requires, not the newest release — anything on Dart 3.0 or later still resolves. FFI struct classes in the platform packages are now `final`, which Dart 3 requires of `Struct` subclasses.
     - **`appWindow.alignment = Alignment.bottomLeft` now puts the window on the screen.** It used to land one full window width off the left edge; and any alignment that wasn't one of the nine named constants — `Alignment(0, 0.5)`, say — collapsed the window to zero size at the origin instead of placing it. Same fix applies to `animateTo(alignment: ...)`. See the platform interface changelog for the details.

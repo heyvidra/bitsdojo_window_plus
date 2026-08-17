@@ -66,7 +66,43 @@ abstract class DesktopWindow {
   void emitWindowEvent(WindowEvent event) => _events.add(event);
 
   int? get handle;
+
+  /// What the DISPLAY reports about itself: DPI/96 on Windows, the Retina
+  /// backing scale on macOS.
+  ///
+  /// A property of the screen, NOT a conversion factor — the two only coincide
+  /// on Windows. Converting coordinates with this turns every point on a
+  /// Retina Mac into half of itself. Use [coordinateScale] for that.
   double get scaleFactor;
+
+  /// Multiply a LOGICAL coordinate by this to get what [rect], [position] and
+  /// `animateTo` actually speak on this platform. Divide to come back.
+  ///
+  /// 1.0 on macOS and Linux, where those APIs are already in points, and
+  /// DPI/96 on Windows, where they are raw device pixels. That split is the
+  /// whole reason this exists apart from [scaleFactor]: every caller needing
+  /// it was re-deriving it — one inside this package, one in an app on top of
+  /// it — and each had to know for itself which platforms lie.
+  ///
+  /// Measured rather than assumed: [size] is logical everywhere and [rect] is
+  /// not, so their ratio IS this number. Cross-checked against [scaleFactor],
+  /// which is exact where the ratio is a rounded division. Falls back to 1.0
+  /// whenever the window cannot be measured — the answer that leaves
+  /// coordinates untouched.
+  double get coordinateScale {
+    final logicalWidth = size.width;
+    final physicalWidth = rect.width;
+    if (logicalWidth <= 0 || physicalWidth <= 0) return 1.0;
+
+    final inferred = physicalWidth / logicalWidth;
+    if (!inferred.isFinite || inferred <= 0) return 1.0;
+    if ((inferred - 1).abs() < 0.01) return 1.0;
+
+    final reported = scaleFactor;
+    if (reported > 0 && (inferred - reported).abs() < 0.05) return reported;
+    return inferred;
+  }
+
   DesktopWindowCapabilities get capabilities =>
       const DesktopWindowCapabilities();
 
