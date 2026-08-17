@@ -17,8 +17,13 @@ Watch the tutorial to get started. Click the image below to watch the video:
     - Minimize/Maximize/Restore/Close window
     - Set window size, minimum size and maximum size
     - Set window position
-    - Set window alignment on screen (center/topLeft/topRight/bottomLeft/bottomRight)
+    - Set window alignment on screen (any Alignment, not just the named corners)
     - Set window title
+    - Multi-window: open, address and close named windows
+    - OS-native alert / confirm dialogs and right-click menus, parented to the
+      window that asked for them
+    - Observe focus, movement, resize, minimize and maximize as a stream
+    - Enumerate the attached monitors to place windows on a chosen display
 
 # Getting Started
 
@@ -60,15 +65,25 @@ And in `windows\runner\flutter_window.cpp`, clean up the plugin's native state w
 ```cpp
 #include <bitsdojo_window_windows/multi_window_manager.h>
 
-void FlutterWindow::OnDestroy() {
-  MultiWindowManager::GetInstance().OnWindowDestroyed(GetHandle());
+LRESULT FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
+                                      WPARAM const wparam,
+                                      LPARAM const lparam) noexcept {
   ...
+  switch (message) {
+  case WM_DESTROY:
+    // Not in OnDestroy(): Win32Window nulls window_handle_ before calling it,
+    // so GetHandle() there never yields the real HWND.
+    MultiWindowManager::GetInstance().OnWindowDestroyed(hwnd);
+    break;
+  }
+
+  return Win32Window::MessageHandler(hwnd, message, wparam, lparam);
 }
 ```
 
 # For macOS apps
 
-Inside your application folder, go to `macos\runner\AppDelegate.swift` and use the plugin base delegate:
+Inside your application folder, go to `macos/Runner/AppDelegate.swift` and use the plugin base delegate:
 
 ```swift
 import Cocoa
@@ -78,7 +93,7 @@ import bitsdojo_window_macos
 class AppDelegate: BitsdojoWindowAppDelegate {}
 ```
 
-Then update `macos\runner\MainFlutterWindow.swift` to use `BitsdojoWindow`:
+Then update `macos/Runner/MainFlutterWindow.swift` to use `BitsdojoWindow`:
 
 ```swift
 import FlutterMacOS
@@ -117,7 +132,7 @@ If you don't want to hide the window on startup, you can remove the `BDW_HIDE_ON
 
 # For Linux apps
 
-Inside your application folder, go to `linux\my_application.cc` and add this line at the beginning of the file:
+Inside your application folder, go to `linux/runner/my_application.cc` and add this line at the beginning of the file:
 
 ```cpp
 #include <bitsdojo_window_linux/bitsdojo_window_plugin.h>
@@ -219,6 +234,117 @@ await appWindow.animateTo(
   duration: const Duration(milliseconds: 280),
 );
 ```
+
+# Multi-window
+
+```dart
+await appWindow.openNewWindow(
+  name: 'editor',                    // selects the route registered above
+  size: const Size(720, 480),
+  arguments: {'docId': 42},
+);
+
+if (await hasWindow('editor')) await closeWindow('editor');
+
+onWindowClosed = (name) => debugPrint('$name went away');
+```
+
+Inside a child window, `appWindow.name`, `appWindow.arguments` and
+`appWindow.isMainWindow` identify it. Calling `openNewWindow` with a name that
+is already open delivers the new `arguments` to the existing window and focuses
+it, rather than opening a second one.
+
+# Native dialogs and menus
+
+Flutter's `showDialog` and `MenuAnchor` remain the better default. Use these
+when it has to be a real OS dialog or menu — modal at the OS level, natively
+styled, a sheet on macOS, or a menu that can extend past the window's edges.
+
+```dart
+// Index of the pressed button, or -1 if dismissed. buttons[0] is the default.
+final index = await showNativeAlert(
+  title: 'Delete this file?',
+  message: 'This cannot be undone.',
+  buttons: ['Delete', 'Cancel'],
+  style: NativeAlertStyle.critical, // info | warning | critical
+);
+
+final ok = await showNativeConfirm(title: 'Quit without saving?');
+
+// The picked item's id, or null if dismissed.
+final id = await showNativeMenu(
+  const [
+    NativeMenuItem('copy', 'Copy'),
+    NativeMenuItem('paste', 'Paste', enabled: false),
+    NativeMenuItem.separator(),
+    NativeMenuItem('view', 'View', submenu: [
+      NativeMenuItem('wrap', 'Wrap lines', checked: true),
+    ]),
+  ],
+  position: details.globalPosition, // null pops at the mouse pointer
+);
+```
+
+`ContextMenuRegion` wraps the right-click plumbing, taking either fixed `items`
+or an `itemsBuilder` that runs at click time with the click position.
+
+These act on the window of the engine that called them, which is what makes
+them land on the right window in a multi-window app.
+
+**On Windows the `buttons` labels are ignored**: `MessageBoxW` only offers the
+fixed system button sets, so the button *count* picks the set (1 → OK, 2 →
+OK/Cancel, 3+ → Yes/No/Cancel) and the user sees the localized system labels.
+The returned index still matches your list.
+
+# Window events and displays
+
+```dart
+appWindow.events.listen((event) {
+  switch (event) {
+    case WindowMoved(:final position): print('moved $position');
+    case WindowResized(:final size): print('resized $size');
+    case WindowFocused(): resume();
+    case WindowBlurred(): pause();
+    default: break;
+  }
+});
+
+for (final display in await getDisplays()) {
+  print('${display.name} ${display.bounds} work=${display.workArea}');
+}
+```
+
+Moves and resizes fire continuously during a drag, so debounce before doing
+anything expensive. Window closing is not part of this stream — use
+`appWindow.onClose`, which can also veto the close.
+
+Display `bounds` and `workArea` share the coordinate space of
+`appWindow.position` **on the same platform**, so
+`appWindow.position = display.workArea.topLeft` puts the window on that monitor
+everywhere. The units are logical pixels on macOS and Linux and device pixels
+on Windows, matching what `position` uses on each; divide by `scaleFactor` for
+logical pixels everywhere. Displays arranged above or left of the primary
+report negative coordinates.
+
+# Upgrading to 0.5.0
+
+This release requires **Dart 3.0 / Flutter 3.10** or newer. The window event
+classes are a `sealed` hierarchy, so the samples above use Dart 3 switch
+patterns.
+
+Deprecated no-op entry points were removed: `bitsdojo_window_set_on_open_new_window`
+and `TOnOpenNewWindowCallback` (Windows/Linux), `BitsdojoWindowPlugin.onOpenNewWindow`
+(macOS), and `TitleBarButtonManager.setCustomizeTitleBarHeight:` (use
+`appWindow.titleBarHeight`). Multi-window spawning goes through
+`MultiWindowManager`, as the runner snippets above show.
+
+`WindowButtonColors` is immutable now — `final` fields and a `const`
+constructor. Constructing it as shown below still works, including with
+nullable theme colours, but assigning to a field afterwards no longer compiles.
+
+`alignment` also got a fix: `Alignment.bottomLeft` used to place the window a
+full width off the left edge of the screen, and alignments other than the nine
+named constants collapsed it to zero size.
 
 You can find examples in the `example` folder.
 

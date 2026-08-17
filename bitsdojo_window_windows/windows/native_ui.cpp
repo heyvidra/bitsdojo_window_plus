@@ -133,8 +133,16 @@ flutter::EncodableList GetDisplays() {
     if (!GetMonitorInfoW(monitor, &info))
       return TRUE; // Skip this one, keep enumerating.
 
-    // Per-monitor DPI: on a mixed-DPI desktop each monitor scales differently,
-    // so the physical->logical divisor has to come from the monitor itself.
+    // Per-monitor DPI, reported to Dart but NOT applied to the geometry below.
+    //
+    // Display coordinates have to be usable as `appWindow.position`, and on
+    // Windows that property is raw device pixels: the getter is GetWindowRect
+    // and the setter is SetWindowPos, neither of which scales (see
+    // bitsdojo_window_windows/lib/src/window.dart). Dividing monitor rects by
+    // the DPI here would leave the two in different units, so
+    // `position = display.workArea.topLeft` landed at 2/3 of the intended
+    // offset on a 150% display. Callers that want logical units have
+    // scaleFactor to divide by.
     UINT dpi_x = 96;
     UINT dpi_y = 96;
     if (FAILED(GetDpiForMonitor(monitor, MDT_EFFECTIVE_DPI, &dpi_x, &dpi_y))) {
@@ -148,21 +156,21 @@ flutter::EncodableList GetDisplays() {
     display[flutter::EncodableValue("id")] = flutter::EncodableValue(name);
     display[flutter::EncodableValue("name")] = flutter::EncodableValue(name);
     display[flutter::EncodableValue("x")] =
-        flutter::EncodableValue(info.rcMonitor.left / scale);
+        flutter::EncodableValue(static_cast<double>(info.rcMonitor.left));
     display[flutter::EncodableValue("y")] =
-        flutter::EncodableValue(info.rcMonitor.top / scale);
+        flutter::EncodableValue(static_cast<double>(info.rcMonitor.top));
     display[flutter::EncodableValue("width")] = flutter::EncodableValue(
-        (info.rcMonitor.right - info.rcMonitor.left) / scale);
+        static_cast<double>(info.rcMonitor.right - info.rcMonitor.left));
     display[flutter::EncodableValue("height")] = flutter::EncodableValue(
-        (info.rcMonitor.bottom - info.rcMonitor.top) / scale);
+        static_cast<double>(info.rcMonitor.bottom - info.rcMonitor.top));
     display[flutter::EncodableValue("workX")] =
-        flutter::EncodableValue(info.rcWork.left / scale);
+        flutter::EncodableValue(static_cast<double>(info.rcWork.left));
     display[flutter::EncodableValue("workY")] =
-        flutter::EncodableValue(info.rcWork.top / scale);
-    display[flutter::EncodableValue("workWidth")] =
-        flutter::EncodableValue((info.rcWork.right - info.rcWork.left) / scale);
-    display[flutter::EncodableValue("workHeight")] =
-        flutter::EncodableValue((info.rcWork.bottom - info.rcWork.top) / scale);
+        flutter::EncodableValue(static_cast<double>(info.rcWork.top));
+    display[flutter::EncodableValue("workWidth")] = flutter::EncodableValue(
+        static_cast<double>(info.rcWork.right - info.rcWork.left));
+    display[flutter::EncodableValue("workHeight")] = flutter::EncodableValue(
+        static_cast<double>(info.rcWork.bottom - info.rcWork.top));
     display[flutter::EncodableValue("scaleFactor")] =
         flutter::EncodableValue(scale);
     display[flutter::EncodableValue("isPrimary")] =

@@ -20,6 +20,9 @@ A [Flutter package](https://pub.dev/packages/bitsdojo_window) that makes it easy
 - onClose handler
 - setWindowTitleBarButtonVisibility
 - titlebar height
+- Native alerts and context menus, owned by the calling window
+- `appWindow.events` — a stream of what the OS did to the window
+- `getDisplays()` — every monitor, in the same coordinate space as `position`
 - and so on...
 
 Platform notes:
@@ -28,7 +31,12 @@ Platform notes:
 - `alwaysOnTop`: Windows, macOS, Linux
 - `onClose`: Windows, macOS, Linux
 - `setWindowTitleBarButtonVisibility`: macOS, Linux
-- `titleBarHeight`: Windows, macOS
+- `titleBarHeight`: Windows, macOS, Linux
+- `showNativeAlert` / `showNativeMenu`: Windows, macOS, Linux
+  (Windows draws the system button set for the button *count* and ignores
+  custom labels — see [Native dialogs and menus](#native-dialogs-and-menus))
+- `appWindow.events`: Windows, macOS, Linux
+- `getDisplays()`: Windows, macOS, Linux
 
 
 <img src="resources/multi-window.png">
@@ -48,12 +56,45 @@ Watch the tutorial to get started. Click the image below to watch the video:
 - Minimize/Maximize/Restore/Close window
 - Set window size, minimum size and maximum size
 - Set window position
-- Set window alignment on screen (center/topLeft/topRight/bottomLeft/bottomRight)
+- Set window alignment on screen (any `Alignment`, not just the named corners)
 - Set window title
+- OS-native alert / confirm dialogs and right-click menus, parented to the
+  window that asked for them
+- Observe window focus, movement, resize, minimize and maximize as a stream
+- Enumerate the attached monitors to place windows on a chosen display
+
+# Upgrading to 0.5.0
+
+**The SDK floor moved to Dart 3.0 / Flutter 3.10.** The window event classes
+form a `sealed` hierarchy and the FFI structs are `final`, both of which need
+Dart 3.
+
+Three deprecated entry points were no-ops behind live public symbols — a hook
+that advertised itself but could never fire — and are now gone:
+
+- `bitsdojo_window_set_on_open_new_window(...)` and `TOnOpenNewWindowCallback`
+  (Windows and Linux). Use `MultiWindowManager` instead; the runner snippets
+  below already do.
+- `BitsdojoWindowPlugin.onOpenNewWindow` (macOS).
+- `TitleBarButtonManager.setCustomizeTitleBarHeight:`. Set
+  `appWindow.titleBarHeight` from Dart.
+
+`WindowButtonColors` is now immutable: its fields are `final` and the
+constructor is `const`. Constructing it exactly as the samples below do keeps
+working — including passing nullable theme colours — but assigning to a field
+after construction (`colors.normal = ...`) no longer compiles. Build a new
+instance instead.
+
+One behaviour fix worth re-testing if you relied on it: `alignment` used to
+place `Alignment.bottomLeft` a full window width off the left edge of the
+screen, and any alignment other than the nine named constants collapsed the
+window to zero size. Both now land where they should.
 
 # Getting Started
 
-Add the package to your project's `pubspec.yaml` file. Since this is a federated plugin, you should add both the core package and the platform-specific package for macOS:
+Add the package to your project's `pubspec.yaml` file. This is a federated
+plugin, but you only depend on `bitsdojo_window` — it pulls the Windows, macOS
+and Linux implementations in for you:
 
 ```yaml
 # pubspec.yaml
@@ -65,16 +106,21 @@ dependencies:
     git:
       url: https://github.com/heyvidra/bitsdojo_window_plus.git
       path: bitsdojo_window
-      ref: v1.0.0
+      ref: v0.4.3
 ```
 
 Flutter-side setup can be kept fairly small. This mirrors the shipped
 [example](./example/lib/main.dart):
 
 ```dart
-void main() {
+void main(List<String> args) {
   runBitsdojoWindowApp(
     app: const MyApp(),
+    // Forward main's args: secondary windows receive their name and arguments
+    // as `--bdw-name=` / `--bdw-args=` entrypoint arguments, so `window.name`
+    // is readable before the first build instead of after the async
+    // `windowReady` message.
+    args: args,
     routes: {
       'inspector_window': (context, arguments) => const MyHomePage(),
       'singleton_window': (context, arguments) => const SingletonDemoWindow(),
@@ -162,12 +208,25 @@ Inside your application folder, go to `windows\runner\main.cpp` and wire the run
 + auto bdw = bitsdojo_window_configure(BDW_CUSTOM_FRAME | BDW_HIDE_ON_STARTUP);
 
   int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
-+                       _In_ wchar_t *command_line, _In_ int show_command) {
+                        _In_ wchar_t *command_line, _In_ int show_command) {
+    ...
+    flutter::DartProject project(L"data");
++   project.set_dart_entrypoint_arguments(GetCommandLineArguments());
 ...
 +   MultiWindowManager::GetInstance().SetWindowFactory(
 +       [](const wchar_t *title, int x, int y, int width, int height,
 +          const char *name, const char *arguments) -> HWND {
 +         flutter::DartProject project(L"data");
++         // Hand the child engine its identity as entrypoint arguments, so
++         // window.name / window.arguments are readable in Dart before the
++         // first build rather than after the async windowReady message.
++         std::vector<std::string> entrypoint_args;
++         if (name && name[0])
++           entrypoint_args.push_back(std::string("--bdw-name=") + name);
++         if (arguments && arguments[0])
++           entrypoint_args.push_back(std::string("--bdw-args=") + arguments);
++         project.set_dart_entrypoint_arguments(std::move(entrypoint_args));
++
 +         auto window = new FlutterWindow(project);
 +         Win32Window::Point origin(x, y);
 +         Win32Window::Size size(width, height);
@@ -179,25 +238,38 @@ Inside your application folder, go to `windows\runner\main.cpp` and wire the run
 +         delete window;
 +         return nullptr;
 +       });
-+
-+   FlutterWindow window(project);
-...
+
+    FlutterWindow window(project);
+    ...
 ```
 
-And in `windows\runner\flutter_window.cpp`:
+The full version of this file is
+[`example/windows/runner/main.cpp`](./example/windows/runner/main.cpp).
+
+And in `windows/runner/flutter_window.cpp`:
 
 ```diff
 // windows/runner/flutter_window.cpp
 
 + #include <bitsdojo_window_windows/multi_window_manager.h>
 
-  void FlutterWindow::OnDestroy() {
-+   MultiWindowManager::GetInstance().OnWindowDestroyed(GetHandle());
-    if (flutter_controller_) {
-      flutter_controller_ = nullptr;
+  LRESULT FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
+                                        WPARAM const wparam,
+                                        LPARAM const lparam) noexcept {
+    ...
+    switch (message) {
+    case WM_FONTCHANGE:
+      flutter_controller_->engine()->ReloadSystemFonts();
+      break;
++   case WM_DESTROY:
++     // Must run here, not in OnDestroy(): Win32Window nulls window_handle_
++     // before calling OnDestroy(), so GetHandle() there never yields the
++     // real HWND.
++     MultiWindowManager::GetInstance().OnWindowDestroyed(hwnd);
++     break;
     }
 
-    Win32Window::OnDestroy();
+    return Win32Window::MessageHandler(hwnd, message, wparam, lparam);
   }
 ```
 
@@ -205,10 +277,10 @@ This is the minimum native glue needed for custom frames plus plugin-managed sec
 
 # For macOS apps
 
-Inside your application folder, go to `macos\runner\AppDelegate.swift` and use the plugin base delegate:
+Inside your application folder, go to `macos/Runner/AppDelegate.swift` and use the plugin base delegate:
 
 ```diff
-// macos/runner/AppDelegate.swift
+// macos/Runner/AppDelegate.swift
 
   import Cocoa
 + import bitsdojo_window_macos
@@ -219,10 +291,10 @@ Inside your application folder, go to `macos\runner\AppDelegate.swift` and use t
 
 `BitsdojoWindowAppDelegate` already handles the primary-window close flow for multi-window apps, so you no longer need to hand-roll that lifecycle glue in each project.
 
-Then update `macos\runner\MainFlutterWindow.swift` to use `BitsdojoWindow` as the runner window:
+Then update `macos/Runner/MainFlutterWindow.swift` to use `BitsdojoWindow` as the runner window:
 
 ```diff
-// macos/runner/MainFlutterWindow.swift
+// macos/Runner/MainFlutterWindow.swift
 
   import Cocoa
   import FlutterMacOS
@@ -257,10 +329,10 @@ If you don't want to hide the window on startup, you can remove the `BDW_HIDE_ON
 
 # For Linux apps
 
-Inside your application folder, go to `linux\my_application.cc` and let the plugin restore child-window state from the environment:
+Inside your application folder, go to `linux/runner/my_application.cc` and let the plugin restore child-window state from the environment:
 
 ```diff
-// linux/my_application.cc
+// linux/runner/my_application.cc
 
   ...
 + #include <stdio.h>
@@ -320,7 +392,37 @@ For the best Linux startup behavior:
 - Only call `gtk_window_present(...)` immediately from `command_line` when you are targeting an already-existing window. Let a brand-new child window wait for its first frame.
 - Give `FlView` a light fallback background instead of pure black if your Flutter UI uses transparent scaffolds or custom frames.
 
-That keeps Linux multi-window support inside the plugin flow, so you do not need custom runner-side spawn logic.
+Two things about Linux multi-window are worth stating plainly, because they
+differ from Windows and macOS:
+
+**A child window is a separate process.** The plugin opens one by re-spawning
+your executable with `BDW_DEPTH`, `BDW_NAME`, `BDW_ARGS`, `BDW_X`, `BDW_Y`,
+`BDW_WIDTH` and `BDW_HEIGHT` in the environment — there is no second engine in
+the same process as there is elsewhere.
+
+**Because of that, the runner has to cooperate in `my_application_new`.** It
+must read `BDW_DEPTH` / `BDW_NAME` and give a child a distinct application id
+plus non-default flags (`G_APPLICATION_HANDLES_COMMAND_LINE |
+G_APPLICATION_SEND_ENVIRONMENT` for a named window,
+`G_APPLICATION_NON_UNIQUE` for an unnamed one). Skip this and GApplication's
+uniqueness routes the new process into the existing instance, so no second
+window ever appears.
+
+The handlers above also have to be installed in `my_application_class_init`,
+alongside `command_line` (which reads `BDW_ARGS` and calls
+`bitsdojo_window_update_arguments` — the delivery path for re-opening a live
+named window with new arguments):
+
+```cpp
+G_APPLICATION_CLASS(klass)->activate = my_application_activate;
+G_APPLICATION_CLASS(klass)->local_command_line = my_application_local_command_line;
+G_APPLICATION_CLASS(klass)->command_line = my_application_command_line;
+G_OBJECT_CLASS(klass)->dispose = my_application_dispose;
+```
+
+The shipped [`example/linux/runner/my_application.cc`](./example/linux/runner/my_application.cc)
+is the complete reference for all of this — copy it rather than assembling the
+fragments above by hand.
 
 # Flutter app integration
 
@@ -341,7 +443,151 @@ await appWindow.animateTo(
 );
 ```
 
-You can find examples in the [example](./bitsdojo_window/example) folder.
+# Multi-window
+
+The native glue above exists to enable this. From Dart:
+
+```dart
+// Open a child window. `name` selects the route registered in
+// runBitsdojoWindowApp(routes: ...), and `arguments` is delivered to it.
+await appWindow.openNewWindow(
+  name: 'editor',
+  size: const Size(720, 480),
+  position: const Offset(120, 80),
+  arguments: {'docId': 42},
+);
+
+// Address a window by name from anywhere in the process.
+if (await hasWindow('editor')) {
+  await closeWindow('editor');
+}
+
+// Called in THIS engine whenever a named window elsewhere closes — however it
+// closed. The closing window's own engine is gone by then, so it never hears
+// about itself.
+onWindowClosed = (name) => debugPrint('$name went away');
+```
+
+Inside a child window, `appWindow.name`, `appWindow.arguments` and
+`appWindow.isMainWindow` identify it, and `appWindow.depth` tells you how far
+down the spawn chain it sits. Calling `openNewWindow` again with a name that is
+already open delivers the new `arguments` to the existing window instead of
+opening a second one — that is what drives `onArgumentsChanged` and
+`RoutedWindowHost`'s rebuild.
+
+# Native dialogs and menus
+
+Flutter's own `showDialog` and `MenuAnchor` cover most in-app cases, and stay
+the better default. Reach for these when the dialog or menu has to be a real OS
+one: modal at the OS level, native styling, a sheet on macOS, or a menu free to
+extend past the window's edges.
+
+```dart
+// Returns the index of the pressed button, or -1 if dismissed.
+final index = await showNativeAlert(
+  title: 'Delete this file?',
+  message: 'This cannot be undone.',
+  buttons: ['Delete', 'Cancel'],   // buttons[0] is the default button
+  style: NativeAlertStyle.critical, // info | warning | critical
+);
+
+// Two-button shorthand: true when the confirm button was pressed.
+final ok = await showNativeConfirm(title: 'Quit without saving?');
+
+// Returns the picked item's id, or null if dismissed.
+final id = await showNativeMenu(
+  const [
+    NativeMenuItem('copy', 'Copy'),
+    NativeMenuItem('paste', 'Paste', enabled: false),
+    NativeMenuItem.separator(),
+    NativeMenuItem('view', 'View', submenu: [
+      NativeMenuItem('wrap', 'Wrap lines', checked: true),
+    ]),
+  ],
+  position: details.globalPosition, // null pops it at the mouse pointer
+);
+```
+
+`ContextMenuRegion` wraps the right-click plumbing:
+
+```dart
+ContextMenuRegion(
+  items: const [NativeMenuItem('copy', 'Copy')],
+  onSelected: (id) => print('picked $id'),
+  child: const Text('Right-click me'),
+)
+
+// Or build the menu from where the click landed:
+ContextMenuRegion(
+  itemsBuilder: (position) => [NativeMenuItem('at', 'Clicked $position')],
+  onSelected: handleSelection,
+  child: canvas,
+)
+```
+
+These are top-level functions rather than `appWindow` methods, and that is
+deliberate: no window handle crosses the channel, because each engine's plugin
+instance already knows which window it belongs to. That is what makes the sheet
+hang off the window that asked for it in a multi-window app.
+
+Platform caveat worth knowing before you design a dialog: **on Windows the
+labels in `buttons` are ignored**. `MessageBoxW` only offers the fixed system
+button sets, so the button *count* selects the set — 1 → OK, 2 → OK/Cancel, 3+ →
+Yes/No/Cancel — and the user sees the localized system labels. The returned
+index still matches your list. macOS and Linux show your labels as written.
+
+# Window events
+
+`appWindow.events` is a broadcast stream of what the OS did to this window:
+
+```dart
+final subscription = appWindow.events.listen((event) {
+  switch (event) {
+    case WindowMoved(:final position):
+      print('moved to $position');
+    case WindowResized(:final size):
+      print('resized to $size');
+    case WindowFocused():
+      resumeExpensiveWork();
+    case WindowBlurred():
+      pauseExpensiveWork();
+    case WindowMinimized():
+    case WindowMaximized():
+    case WindowRestored():
+      break;
+  }
+});
+```
+
+Moves and resizes fire continuously while the user drags, so debounce before
+doing anything expensive (like persisting geometry). Closing is not in this
+stream — use `appWindow.onClose` (or `RoutedWindowHost`'s `onCloseRequested`),
+which can also veto the close.
+
+# Displays
+
+```dart
+for (final display in await getDisplays()) {
+  print('${display.name}: ${display.bounds} work=${display.workArea} '
+      '@${display.scaleFactor}x primary=${display.isPrimary}');
+}
+
+// Place a window on a chosen monitor.
+final target = (await getDisplays()).firstWhere((d) => !d.isPrimary);
+appWindow.position = target.workArea.topLeft;
+```
+
+`bounds` and `workArea` use the same units and origin as `appWindow.position`
+**on the same platform**, so a display's `topLeft` can be assigned straight to
+it anywhere. Those units are logical pixels on macOS and Linux, and device
+pixels on Windows — which is what `position` reads and writes there. Divide by
+`scaleFactor` if you want logical pixels on every platform.
+
+A monitor arranged above or to the left of the primary one reports negative
+coordinates — that is correct, not a bug. `workArea` excludes the menu bar,
+Dock and taskbar.
+
+You can find examples in the [example](./example) folder.
 
 Here is an example that displays this window:
 

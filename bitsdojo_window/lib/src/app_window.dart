@@ -133,13 +133,20 @@ DesktopWindow getWindowForHandle(int handle) {
 /// The monitors attached to the machine, in no guaranteed order. Empty when the
 /// platform can't enumerate them.
 ///
-/// Coordinates are logical pixels in the same space as `appWindow.position`, so
-/// placing a window on a chosen display is direct:
+/// [Display.bounds] and [Display.workArea] are in the same units and origin as
+/// `appWindow.position` on the same platform, so placing a window on a chosen
+/// display is direct:
 ///
 /// ```dart
 /// final display = (await getDisplays()).firstWhere((d) => !d.isPrimary);
 /// appWindow.position = display.workArea.topLeft;
 /// ```
+///
+/// Those units are logical pixels on macOS and Linux, and device pixels on
+/// Windows — matching what `position` reads and writes there. Divide by
+/// [Display.scaleFactor] if you need logical pixels on every platform. A
+/// monitor placed above or left of the primary one reports negative
+/// coordinates, which is correct rather than a bug.
 Future<List<Display>> getDisplays() => _platform.getDisplays();
 
 /// Shows an OS-native alert owned by THIS window — a sheet on macOS, a
