@@ -1,7 +1,6 @@
 #include <gdk/gdk.h>
 #include <gtk/gtk.h>
 
-#include "./debug_helper.h"
 #include "./gtk_utils.h"
 #include "./window_info.h"
 #include "include/bitsdojo_window_linux/bitsdojo_window_plugin.h"
@@ -324,8 +323,6 @@ static gboolean onWindowEventAfter(GtkWidget *text_view, GdkEvent *event,
         emitMouseMoveEvent(self->event_box,x, y);
     } else if (event->type == GDK_LEAVE_NOTIFY) {
         emitMouseMoveEvent(self->event_box,-1, -1);
-    } else {
-        // bitsdojo_window::printGdkEvent("event after", event->type);
     }
     return FALSE;
 }

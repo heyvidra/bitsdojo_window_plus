@@ -50,13 +50,6 @@ public:
 
 BDW_VISIBLE BitsdojoWindowGtk *bitsdojo_window_from(GtkWindow *window);
 
-typedef void (*TOnOpenNewWindowCallback)(const char *name, const char *args,
-                                         double width, double height, double x,
-                                         double y);
-
-FLUTTER_PLUGIN_EXPORT void
-bitsdojo_window_set_on_open_new_window(TOnOpenNewWindowCallback callback);
-
 FLUTTER_PLUGIN_EXPORT void
 bitsdojo_window_update_arguments(const char *arguments);
 

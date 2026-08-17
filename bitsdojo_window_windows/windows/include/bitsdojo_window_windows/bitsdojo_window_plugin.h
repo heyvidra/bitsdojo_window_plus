@@ -15,12 +15,6 @@ void BitsdojoWindowPluginRegisterWithRegistrar(
 
 int bitsdojo_window_configure(unsigned int flags);
 
-typedef void (*TOnOpenNewWindowCallback)(const char *name,
-                                         const char *arguments, double width,
-                                         double height, double x, double y);
-
-void bitsdojo_window_set_on_open_new_window(TOnOpenNewWindowCallback callback);
-
 #if defined(__cplusplus)
 } // extern "C"
 #endif

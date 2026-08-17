@@ -8,7 +8,6 @@ pkg_check_modules(GTK REQUIRED IMPORTED_TARGET gtk+-3.0)
 set(PLUGIN_NAME "${PROJECT_NAME}_plugin")
 
 add_library(${PLUGIN_NAME} SHARED
-  "debug_helper.cpp"
   "api_impl.cpp"
   "multi_window_manager.cpp"
   "bitsdojo_window_plugin.cpp"

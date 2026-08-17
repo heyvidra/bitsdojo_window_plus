@@ -7,10 +7,6 @@ class MouseState {
   bool isMouseOver = false;
   bool isMouseDown = false;
   MouseState();
-  @override
-  String toString() {
-    return "isMouseDown: ${this.isMouseDown} - isMouseOver: ${this.isMouseOver}";
-  }
 }
 
 
@@ -64,7 +60,6 @@ class _MouseStateBuilderState extends State<MouseStateBuilder> {
                 }
               });
             },
-            onTapUp: (_) {},
             child: widget.builder(context, _mouseState)));
   }
 }

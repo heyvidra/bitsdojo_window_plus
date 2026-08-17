@@ -1,3 +1,6 @@
+## 0.5.0
+    - **Breaking:** removed the deprecated `bitsdojo_window_set_on_open_new_window` C entry point and its `TOnOpenNewWindowCallback` typedef. The stored callback was never invoked — the function only logged a deprecation warning — so the export advertised a hook that could not fire. Use `MultiWindowManager` instead.
+
 ## 0.4.3
     - Version alignment with the 0.4.3 macOS launch-crash fix; no functional change in this package.
 

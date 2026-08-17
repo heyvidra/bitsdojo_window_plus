@@ -216,12 +216,6 @@ void bitsdojo_window_plugin_register_with_registrar(
   g_object_unref(plugin);
 }
 
-TOnOpenNewWindowCallback onOpenNewWindowCallback = nullptr;
-
-void bitsdojo_window_set_on_open_new_window(TOnOpenNewWindowCallback callback) {
-  onOpenNewWindowCallback = callback;
-}
-
 void bitsdojo_window_update_arguments(const char *arguments) {
   if (pluginInst == nullptr || pluginInst->channel == nullptr)
     return;

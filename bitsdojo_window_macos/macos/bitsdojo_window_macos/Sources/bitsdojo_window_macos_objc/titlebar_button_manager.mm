@@ -174,8 +174,4 @@ int _normalTitleBarHeight = 28;
   [superview addConstraints:@[ topConstraint, leftConstraint ]];
 }
 
-+ (void)setCustomizeTitleBarHeight:(int)height {
-  // Deprecated, we use per-window height now
-}
-
 @end

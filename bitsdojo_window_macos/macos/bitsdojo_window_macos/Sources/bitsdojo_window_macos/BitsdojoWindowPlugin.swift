@@ -390,18 +390,6 @@ public class BitsdojoWindowPlugin: NSObject, FlutterPlugin {
     }
   }
 
-  // MARK: - Backward Compatibility (Deprecated)
-  
-  public typealias OnOpenNewWindow = (String?, [String: Any]?, NSSize?, NSPoint?) -> Void
-  
-  @available(*, deprecated, message: "Use MultiWindowManager.shared.openNewWindow instead. This callback will be removed in v2.0.0")
-  public static var onOpenNewWindow: OnOpenNewWindow? {
-    get { return _legacyCallback }
-    set { _legacyCallback = newValue }
-  }
-  
-  private static var _legacyCallback: OnOpenNewWindow?
-
   public func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
     switch call.method {
     case "openNewWindow":

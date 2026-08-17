@@ -1,3 +1,7 @@
+## 0.5.0
+    - **Breaking:** removed the deprecated `bitsdojo_window_set_on_open_new_window` C entry point and its `TOnOpenNewWindowCallback` typedef. The stored callback was never invoked, so the export advertised a hook that could not fire. Use `MultiWindowManager` instead.
+    - Deleted `debug_helper.cpp` — `printWindowStateMask` / `printGdkEvent` had no callers other than one commented-out line, and were still being compiled into the plugin.
+
 ## 0.4.3
     - Version alignment with the 0.4.3 macOS launch-crash fix; no functional change in this package.
 

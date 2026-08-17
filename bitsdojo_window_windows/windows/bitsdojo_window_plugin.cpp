@@ -310,18 +310,6 @@ void BitsdojoWindowPlugin::HandleMethodCall(
 
 } // namespace
 
-// Deprecated: Use MultiWindowManager instead
-// This callback is kept for backward compatibility but is no longer used
-// internally
-TOnOpenNewWindowCallback onOpenNewWindowCallback = nullptr;
-
-void bitsdojo_window_set_on_open_new_window(TOnOpenNewWindowCallback callback) {
-  onOpenNewWindowCallback = callback;
-  OutputDebugStringA(
-      "[bitsdojo_window] WARNING: bitsdojo_window_set_on_open_new_window is "
-      "deprecated. Use MultiWindowManager instead.\n");
-}
-
 void BitsdojoWindowPluginRegisterWithRegistrar(
     FlutterDesktopPluginRegistrarRef registrar) {
   BitsdojoWindowPlugin::RegisterWithRegistrar(

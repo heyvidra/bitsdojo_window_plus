@@ -1,3 +1,6 @@
+## 0.5.0
+    - Version alignment with the 0.5.0 removal of deprecated no-op native entry points, and the macOS fullscreen fix for custom-frame windows that never set a background effect. No Dart API change.
+
 ## 0.4.3
     - Version alignment with the 0.4.3 macOS launch-crash fix; no functional change in this package.
 

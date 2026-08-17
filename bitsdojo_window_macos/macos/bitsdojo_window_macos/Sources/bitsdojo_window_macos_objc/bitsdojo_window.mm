@@ -391,7 +391,6 @@ void setTitleBarHeight(NSWindow *window, int height) {
   if (controller != nil) {
     controller.titleBarHeight = height;
   }
-  [TitleBarButtonManager setCustomizeTitleBarHeight:height];
   // Re-adjust buttons for the current window
   runOnMainThread(^{
     [TitleBarButtonManager

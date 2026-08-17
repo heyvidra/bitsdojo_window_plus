@@ -8,7 +8,6 @@
                         withController:(BitsdojoWindowController *)controller;
 + (void)showTitleBarButtonsForWindow:(NSWindow *)window;
 + (void)hideTitleBarButtonsForWindow:(NSWindow *)window;
-+ (void)setCustomizeTitleBarHeight:(int)height;
 
 + (void)setWindowButtonVisibility:(NSWindow *)window
                            button:(int)button
