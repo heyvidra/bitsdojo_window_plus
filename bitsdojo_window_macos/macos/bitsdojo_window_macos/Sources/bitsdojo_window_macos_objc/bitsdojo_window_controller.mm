@@ -515,8 +515,16 @@ static BOOL bdwWindowWantsTransparentBackground(NSWindow *window) {
   // double-apply was a defensive workaround for an older flicker
   // that no longer reproduces on modern macOS — and it caused a
   // visible second redraw 100 ms after the transition completed.
+  //
+  // Only re-apply a translucent effect. lastBackgroundEffect defaults to 0
+  // (== WindowEffect.disabled) and only setBackgroundEffect ever writes it,
+  // so an unguarded call would run the Disabled branch on a custom-frame
+  // window that never set an effect — leaving it opaque and clearing
+  // wantsTransparentBackground. Same guard as windowDidChangeOcclusionState.
   [self forceTransparency];
-  [self applyBackgroundEffect:self.lastBackgroundEffect];
+  if (self.lastBackgroundEffect > 0) {
+    [self applyBackgroundEffect:self.lastBackgroundEffect];
+  }
 
   [TitleBarButtonManager showTitleBarButtonsForWindow:self.window];
   [TitleBarButtonManager adjustButtonPositionsForWindow:true
@@ -565,9 +573,11 @@ static BOOL bdwWindowWantsTransparentBackground(NSWindow *window) {
 
   // Same simplification as windowDidEnterFullScreen — drop the
   // delayed double-apply that caused a second redraw 100 ms after
-  // the transition.
+  // the transition. Same lastBackgroundEffect > 0 guard as on enter.
   [self forceTransparency];
-  [self applyBackgroundEffect:self.lastBackgroundEffect];
+  if (self.lastBackgroundEffect > 0) {
+    [self applyBackgroundEffect:self.lastBackgroundEffect];
+  }
 
   [self.window setHasShadow:YES];
 }
