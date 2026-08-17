@@ -99,7 +99,7 @@ typedef Void TSetWindowTitle(IntPtr window, Pointer<Utf8> title);
 typedef DSetWindowTitle = void Function(int window, Pointer<Utf8> title);
 final DSetWindowTitle setWindowTitle = _theAPI.ref.setWindowTitle.asFunction();
 
-class BDWAPI extends Struct {
+final class BDWAPI extends Struct {
   external Pointer<NativeFunction<TGetAppWindowHandle>> getAppWindowHandle;
   external Pointer<NativeFunction<TGetScreenRect>> getScreenRect;
   external Pointer<NativeFunction<TGetScaleFactor>> getScaleFactor;

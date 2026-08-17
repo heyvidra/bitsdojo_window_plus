@@ -43,6 +43,7 @@ private:
       std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result);
 
   static void OnCloseRequested(HWND window);
+  static void OnWindowEvent(HWND window, int code, double a, double b);
 
   // The registrar for this plugin.
   flutter::PluginRegistrarWindows *registrar_;
@@ -75,6 +76,28 @@ void BitsdojoWindowPlugin::OnCloseRequested(HWND window) {
 }
 
 // static
+void BitsdojoWindowPlugin::OnWindowEvent(HWND window, int code, double a,
+                                         double b) {
+  auto it = instances_.find(window);
+  if (it == instances_.end())
+    return;
+
+  flutter::EncodableMap arguments;
+  arguments[flutter::EncodableValue("handle")] =
+      flutter::EncodableValue((int64_t)window);
+  arguments[flutter::EncodableValue("type")] = flutter::EncodableValue(code);
+  if (code == bitsdojo_window::kBdwWindowMoved) {
+    arguments[flutter::EncodableValue("x")] = flutter::EncodableValue(a);
+    arguments[flutter::EncodableValue("y")] = flutter::EncodableValue(b);
+  } else if (code == bitsdojo_window::kBdwWindowResized) {
+    arguments[flutter::EncodableValue("width")] = flutter::EncodableValue(a);
+    arguments[flutter::EncodableValue("height")] = flutter::EncodableValue(b);
+  }
+  it->second->channel_->InvokeMethod(
+      "windowEvent", std::make_unique<flutter::EncodableValue>(arguments));
+}
+
+// static
 void BitsdojoWindowPlugin::RegisterWithRegistrar(
     flutter::PluginRegistrarWindows *registrar) {
   auto channel =
@@ -94,6 +117,7 @@ void BitsdojoWindowPlugin::RegisterWithRegistrar(
     bitsdojo_window::attachFlutterChildWindow(window, child_window);
     instances_[window] = plugin.get();
     bdwAPI->publicAPI->setCloseRequestedCallback(window, OnCloseRequested);
+    bdwAPI->publicAPI->setWindowEventCallback(window, OnWindowEvent);
 
     // Sending a platform message for the primary window during native plugin
     // registration is racy on Windows: registration happens before Dart main
@@ -296,6 +320,8 @@ void BitsdojoWindowPlugin::HandleMethodCall(
       MultiWindowManager::GetInstance().CloseWindow(name_str);
     }
     result->Success();
+  } else if (method_call.method_name().compare("getDisplays") == 0) {
+    result->Success(flutter::EncodableValue(bitsdojo_native_ui::GetDisplays()));
   } else if (method_call.method_name().compare("showNativeAlert") == 0) {
     auto args = std::get_if<flutter::EncodableMap>(method_call.arguments());
     int index = args ? bitsdojo_native_ui::ShowAlert(window, *args) : -1;

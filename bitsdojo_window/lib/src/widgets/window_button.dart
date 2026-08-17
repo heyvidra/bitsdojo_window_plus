@@ -23,41 +23,43 @@ class WindowButtonContext {
       required this.iconColor});
 }
 
+/// Colors for the four window buttons, per mouse state.
+///
+/// Immutable, and the constructor is `const`: the defaults now live in the
+/// initializer list instead of a shared mutable `_defaultButtonColors`
+/// instance, which anyone could have reached through a button's `colors` field
+/// and mutated for every button in the app.
+///
+/// The parameters stay nullable on purpose — `WindowButtonColors(iconNormal:
+/// Theme.of(context).iconTheme.color)` passes a `Color?`, and defaulting in the
+/// initializer list keeps that working.
 class WindowButtonColors {
-  late Color normal;
-  late Color mouseOver;
-  late Color mouseDown;
-  late Color iconNormal;
-  late Color iconMouseOver;
-  late Color iconMouseDown;
-  WindowButtonColors(
-      {Color? normal,
-      Color? mouseOver,
-      Color? mouseDown,
-      Color? iconNormal,
-      Color? iconMouseOver,
-      Color? iconMouseDown}) {
-    this.normal = normal ?? _defaultButtonColors.normal;
-    this.mouseOver = mouseOver ?? _defaultButtonColors.mouseOver;
-    this.mouseDown = mouseDown ?? _defaultButtonColors.mouseDown;
-    this.iconNormal = iconNormal ?? _defaultButtonColors.iconNormal;
-    this.iconMouseOver = iconMouseOver ?? _defaultButtonColors.iconMouseOver;
-    this.iconMouseDown = iconMouseDown ?? _defaultButtonColors.iconMouseDown;
-  }
-}
+  const WindowButtonColors({
+    Color? normal,
+    Color? mouseOver,
+    Color? mouseDown,
+    Color? iconNormal,
+    Color? iconMouseOver,
+    Color? iconMouseDown,
+  })  : normal = normal ?? const Color(0x00000000),
+        mouseOver = mouseOver ?? const Color(0xFF404040),
+        mouseDown = mouseDown ?? const Color(0xFF202020),
+        iconNormal = iconNormal ?? const Color(0xFF805306),
+        iconMouseOver = iconMouseOver ?? const Color(0xFFFFFFFF),
+        iconMouseDown = iconMouseDown ?? const Color(0xFFF0F0F0);
 
-final _defaultButtonColors = WindowButtonColors(
-    normal: Color(0x00000000),
-    iconNormal: Color(0xFF805306),
-    mouseOver: Color(0xFF404040),
-    mouseDown: Color(0xFF202020),
-    iconMouseOver: Color(0xFFFFFFFF),
-    iconMouseDown: Color(0xFFF0F0F0));
+  final Color normal;
+  final Color mouseOver;
+  final Color mouseDown;
+  final Color iconNormal;
+  final Color iconMouseOver;
+  final Color iconMouseDown;
+}
 
 class WindowButton extends StatelessWidget {
   final WindowButtonBuilder? builder;
   final WindowButtonIconBuilder? iconBuilder;
-  late final WindowButtonColors colors;
+  final WindowButtonColors colors;
   final bool animate;
   final EdgeInsets? padding;
   final VoidCallback? onPressed;
@@ -70,9 +72,8 @@ class WindowButton extends StatelessWidget {
       this.padding,
       this.onPressed,
       this.animate = false})
-      : super(key: key) {
-    this.colors = colors ?? _defaultButtonColors;
-  }
+      : colors = colors ?? const WindowButtonColors(),
+        super(key: key);
 
   Color getBackgroundColor(MouseState mouseState) {
     if (mouseState.isMouseDown) return colors.mouseDown;

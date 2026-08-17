@@ -41,6 +41,24 @@ class MethodChannelBitsdojoWindow extends BitsdojoWindowPlatform {
   }
 
   @override
+  Future<List<Display>> getDisplays() async {
+    try {
+      final raw = await _channel.invokeListMethod<Object?>('getDisplays');
+      if (raw == null) return const [];
+      final displays = <Display>[];
+      for (final entry in raw) {
+        if (entry is! Map) continue;
+        final display = Display.fromMap(entry);
+        if (display != null) displays.add(display);
+      }
+      return displays;
+    } catch (e, st) {
+      debugPrint("bitsdojo_window: could not enumerate displays: $e\n$st");
+      return const [];
+    }
+  }
+
+  @override
   Future<String?> showNativeMenu(
     List<NativeMenuItem> items, {
     Offset? position,

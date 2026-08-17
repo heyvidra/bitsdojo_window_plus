@@ -1,7 +1,7 @@
 import 'dart:ffi';
 import 'package:ffi/ffi.dart';
 
-class BDWRect extends Struct {
+final class BDWRect extends Struct {
   @Double()
   external double left, top, right, bottom;
 }
@@ -22,7 +22,7 @@ extension FreeBDWRect on Pointer<BDWRect> {
   }
 }
 
-class BDWScreenInfo extends Struct {
+final class BDWScreenInfo extends Struct {
   external Pointer<BDWRect> workingRect;
   external Pointer<BDWRect> fullRect;
 }
@@ -43,7 +43,7 @@ extension FreeBDWScreenInfo on Pointer<BDWScreenInfo> {
   }
 }
 
-class BDWOffset extends Struct {
+final class BDWOffset extends Struct {
   @Double()
   external double x, y;
 }

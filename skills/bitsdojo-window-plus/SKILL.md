@@ -135,6 +135,38 @@ In the child window the matching route from `routes:` receives `arguments`. `win
 - Multi-window: `name`, `arguments`, `isMainWindow`, `depth`, `openNewWindow(...)`, `getWindowForHandle(handle)`, `terminateApp()`.
 - Capabilities: `appWindow.capabilities.supportsBackgroundEffects` / `supportsTitleBarButtonVisibility` / `supportsTitleBarButtonOffset` — **check these before calling platform-gated APIs** to keep code cross-platform.
 
+## Window events
+
+`appWindow.events` is a broadcast `Stream<WindowEvent>`. The types are `sealed`, so switch exhaustively and the compiler tells you when a new one lands:
+
+```dart
+_sub = appWindow.events.listen((event) {
+  switch (event) {
+    case WindowMoved(:final position): saveOrigin(position);
+    case WindowResized(:final size): saveSize(size);
+    case WindowFocused(): resumePlayback();
+    case WindowBlurred(): pausePlayback();
+    case WindowMinimized() || WindowMaximized() || WindowRestored(): break;
+  }
+});
+```
+
+- Geometry is in logical pixels, in the same space `appWindow.position` / `size` read back — every platform fills the payload from the same native getter those properties use, so an event never disagrees with a property read after it.
+- Cancel your subscription as usual; the stream itself is never closed (a window object lives as long as its engine), so there is nothing to dispose.
+- **Closing is not an event.** Use `onClose` (or `WindowConfiguration.onCloseRequested`) to *veto* a close, and top-level `onWindowClosed` to hear about other windows closing. A stream event can do neither.
+- Expect bursts while a window is being dragged or live-resized — debounce if you're persisting geometry.
+- No fullscreen event: macOS and Linux report it natively but Windows does not distinguish it cleanly, and one platform silently missing an event is worse than the event not existing. `appWindow.toggleFullScreen()` is still there, and a fullscreen transition does emit moved/resized.
+
+## Displays
+
+```dart
+final displays = await getDisplays();
+final second = displays.firstWhere((d) => !d.isPrimary);
+appWindow.position = second.workArea.topLeft;   // same coordinate space
+```
+
+`Display` carries `id`, `name`, `bounds`, `workArea` (bounds minus menu bar / taskbar / docks), `scaleFactor`, `isPrimary`. Coordinates are logical pixels in the global desktop space that `appWindow.position` uses, so a monitor above or left of the primary reports negative coordinates. Returns an empty list where the platform can't enumerate — code that places windows needs a one-screen fallback anyway.
+
 ## Native dialogs and menus
 
 Top-level functions (not on `appWindow` — they always act on the window of the *calling* engine, which is what makes them land on the right window in a multi-window app):
@@ -208,7 +240,9 @@ If `BDW_CUSTOM_FRAME` is **not** set, the OS chrome is shown and these widgets a
 | `setWindowTitleBarButtonVisibility`  |    —    |   Y   |   Y   |
 | `titleBarHeight`                     |    Y    |   Y   |   —   |
 | `showNativeAlert` / `showNativeConfirm` | Y (system button labels) | Y (sheet) | Y |
-| `showNativeMenu`                     |    Y    |   Y   |   Y   |
+| `showNativeMenu` / `ContextMenuRegion` |    Y    |   Y   |   Y   |
+| `appWindow.events`                   |    Y    |   Y   |   Y   |
+| `getDisplays()`                      |    Y    |   Y   |   Y   |
 
 Always guard the unsupported calls behind `Platform.isX` or `appWindow.capabilities.*` rather than letting them silently no-op.
 

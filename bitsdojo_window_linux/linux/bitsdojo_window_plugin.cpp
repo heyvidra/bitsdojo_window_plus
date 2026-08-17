@@ -57,6 +57,58 @@ start_window_drag_at_position(FlBitsdojoWindowPlugin *self, FlValue *args) {
   return FL_METHOD_RESPONSE(fl_method_success_response_new(nullptr));
 }
 
+// Every attached monitor. GDK reports geometry in logical units already
+// scaled the same way window positions are, so the values go straight through.
+static FlValue *bdw_get_displays() {
+  FlValue *list = fl_value_new_list();
+  GdkDisplay *display = gdk_display_get_default();
+  if (display == nullptr)
+    return list;
+
+  int count = gdk_display_get_n_monitors(display);
+  GdkMonitor *primary = gdk_display_get_primary_monitor(display);
+  for (int i = 0; i < count; i++) {
+    GdkMonitor *monitor = gdk_display_get_monitor(display, i);
+    if (monitor == nullptr)
+      continue;
+
+    GdkRectangle bounds;
+    gdk_monitor_get_geometry(monitor, &bounds);
+    GdkRectangle work;
+    gdk_monitor_get_workarea(monitor, &work);
+
+    const char *model = gdk_monitor_get_model(monitor);
+    g_autofree gchar *id = g_strdup_printf("%d", i);
+
+    FlValue *entry = fl_value_new_map();
+    fl_value_set_string_take(entry, "id", fl_value_new_string(id));
+    fl_value_set_string_take(
+        entry, "name", fl_value_new_string(model != nullptr ? model : id));
+    fl_value_set_string_take(entry, "x", fl_value_new_float(bounds.x));
+    fl_value_set_string_take(entry, "y", fl_value_new_float(bounds.y));
+    fl_value_set_string_take(entry, "width", fl_value_new_float(bounds.width));
+    fl_value_set_string_take(entry, "height",
+                             fl_value_new_float(bounds.height));
+    fl_value_set_string_take(entry, "workX", fl_value_new_float(work.x));
+    fl_value_set_string_take(entry, "workY", fl_value_new_float(work.y));
+    fl_value_set_string_take(entry, "workWidth",
+                             fl_value_new_float(work.width));
+    fl_value_set_string_take(entry, "workHeight",
+                             fl_value_new_float(work.height));
+    fl_value_set_string_take(
+        entry, "scaleFactor",
+        fl_value_new_float(gdk_monitor_get_scale_factor(monitor)));
+    // Wayland has no primary monitor concept, so gdk_display_get_primary_monitor
+    // returns null there; fall back to "the first one" rather than reporting no
+    // primary at all.
+    fl_value_set_string_take(
+        entry, "isPrimary",
+        fl_value_new_bool(primary != nullptr ? monitor == primary : i == 0));
+    fl_value_append_take(list, entry);
+  }
+  return list;
+}
+
 // Called when a method call is received from Flutter.
 static void method_call_cb(FlMethodChannel *channel, FlMethodCall *method_call,
                            gpointer user_data) {
@@ -159,6 +211,9 @@ static void method_call_cb(FlMethodChannel *channel, FlMethodCall *method_call,
         response = FL_METHOD_RESPONSE(fl_method_success_response_new(nullptr));
       }
     }
+  } else if (strcmp(method, "getDisplays") == 0) {
+    g_autoptr(FlValue) displays = bdw_get_displays();
+    response = FL_METHOD_RESPONSE(fl_method_success_response_new(displays));
   } else if (strcmp(method, "showNativeAlert") == 0) {
     // get_window(self) is THIS engine's window, so the dialog stays with the
     // window that asked for it.
@@ -233,6 +288,27 @@ void bitsdojo_window_plugin_register_with_registrar(
   FlView *view = fl_plugin_registrar_get_view(plugin->registrar);
   enhanceFlutterView(GTK_WIDGET(view));
   g_object_unref(plugin);
+}
+
+void bdwEmitWindowEvent(int code, double a, double b) {
+  if (pluginInst == nullptr || pluginInst->channel == nullptr)
+    return;
+  g_autoptr(FlValue) args = fl_value_new_map();
+  fl_value_set_string_take(args, "type", fl_value_new_int(code));
+  switch (code) {
+  case kBdwWindowMoved:
+    fl_value_set_string_take(args, "x", fl_value_new_float(a));
+    fl_value_set_string_take(args, "y", fl_value_new_float(b));
+    break;
+  case kBdwWindowResized:
+    fl_value_set_string_take(args, "width", fl_value_new_float(a));
+    fl_value_set_string_take(args, "height", fl_value_new_float(b));
+    break;
+  default:
+    break;
+  }
+  fl_method_channel_invoke_method(pluginInst->channel, "windowEvent", args,
+                                  nullptr, nullptr, nullptr);
 }
 
 void bitsdojo_window_update_arguments(const char *arguments) {

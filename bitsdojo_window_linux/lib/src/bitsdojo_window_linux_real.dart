@@ -30,6 +30,14 @@ class BitsdojoWindowLinux extends BitsdojoWindowPlatform {
         } else {
           window.close();
         }
+      } else if (call.method == 'windowEvent') {
+        final arguments = call.arguments as Map?;
+        if (arguments == null) return;
+        final event = decodeWindowEvent(arguments);
+        if (event == null) return;
+        final handle = arguments['handle'] as int?;
+        final window = handle != null ? getWindowForHandle(handle) : appWindow;
+        window.emitWindowEvent(event);
       } else if (call.method == 'updateArguments') {
         final argumentsString = call.arguments as String?;
         if (argumentsString != null) {

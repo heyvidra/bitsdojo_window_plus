@@ -233,9 +233,93 @@ public class BitsdojoWindowPlugin: NSObject, FlutterPlugin {
           self?.removeLifecycleObservers()
       }
       lifecycleObserverTokens = [occlusionObserver, closeObserver]
-      
+      // Appended after the assignment above, not merged into it: that literal
+      // is the lifecycle pair, and removeLifecycleObservers() tears down the
+      // whole array, so window events ride the same per-window lifetime.
+      lifecycleObserverTokens += windowEventObservers(for: window)
+
       // Initial State Check
       BitsdojoWindowPlugin.recalculateLifecycle()
+  }
+
+  // MARK: - Window events
+
+  /// Wire codes for the `windowEvent` channel message. Order must match
+  /// `WindowEventCode` in
+  /// bitsdojo_window_platform_interface/lib/window_event.dart.
+  private enum WindowEventCode: Int {
+    case focused = 0
+    case blurred = 1
+    case moved = 2
+    case resized = 3
+    case minimized = 4
+    case maximized = 5
+    case restored = 6
+  }
+
+  private func sendWindowEvent(_ code: WindowEventCode, _ window: NSWindow) {
+    var arguments: [String: Any] = [
+      "handle": Int(bitPattern: Unmanaged.passUnretained(window).toOpaque()),
+      "type": code.rawValue,
+    ]
+
+    // Geometry comes from the same native getter that backs Dart's `position`
+    // and `size`, rather than from window.frame directly: that getter reads the
+    // controller's cached frame and flips into the top-left origin space Dart
+    // uses. Reading the frame here instead would let an event payload disagree
+    // with a property read taken right after it.
+    if code == .moved || code == .resized {
+      var rect = BDWRect()
+      let bdwAPI = bitsdojo_window_api().pointee
+      if bdwAPI.publicAPI.pointee.getRectForWindow(window, &rect) == BDW_SUCCESS {
+        if code == .moved {
+          arguments["x"] = rect.left
+          arguments["y"] = rect.top
+        } else {
+          arguments["width"] = rect.right - rect.left
+          arguments["height"] = rect.bottom - rect.top
+        }
+      }
+    }
+
+    channel.invokeMethod("windowEvent", arguments: arguments)
+  }
+
+  private func windowEventObservers(for window: NSWindow) -> [NSObjectProtocol] {
+    let center = NotificationCenter.default
+
+    func observe(
+      _ name: NSNotification.Name,
+      _ handler: @escaping (BitsdojoWindowPlugin, NSWindow) -> Void
+    ) -> NSObjectProtocol {
+      return center.addObserver(forName: name, object: window, queue: nil) {
+        [weak self, weak window] _ in
+        guard let self = self, let window = window else { return }
+        handler(self, window)
+      }
+    }
+
+    // macOS has no "maximize": the zoom button toggles `isZoomed`, which is
+    // also what DesktopWindow.isMaximized reports. Derive the maximized and
+    // restored events from transitions of that flag, observed on resize —
+    // zooming always resizes.
+    var wasZoomed = window.isZoomed
+
+    return [
+      observe(NSWindow.didBecomeKeyNotification) { $0.sendWindowEvent(.focused, $1) },
+      observe(NSWindow.didResignKeyNotification) { $0.sendWindowEvent(.blurred, $1) },
+      observe(NSWindow.didMoveNotification) { $0.sendWindowEvent(.moved, $1) },
+      observe(NSWindow.didMiniaturizeNotification) { $0.sendWindowEvent(.minimized, $1) },
+      observe(NSWindow.didDeminiaturizeNotification) { $0.sendWindowEvent(.restored, $1) },
+      observe(NSWindow.didResizeNotification) { plugin, window in
+        let isZoomed = window.isZoomed
+        if isZoomed != wasZoomed {
+          wasZoomed = isZoomed
+          plugin.sendWindowEvent(isZoomed ? .maximized : .restored, window)
+        }
+        plugin.sendWindowEvent(.resized, window)
+      },
+    ]
   }
 
   private func removeLifecycleObservers() {
@@ -439,6 +523,11 @@ public class BitsdojoWindowPlugin: NSObject, FlutterPlugin {
         DispatchQueue.main.async {
             MultiWindowManager.shared.closeWindow(named: name)
             result(nil)
+        }
+
+    case "getDisplays":
+        DispatchQueue.main.async {
+            result(NativeUI.displays())
         }
 
     case "showNativeAlert":

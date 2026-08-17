@@ -22,6 +22,9 @@ typedef struct _BDWPublicAPI {
   TSetAlwaysOnTop setAlwaysOnTop;
   TSetCloseRequestedCallback setCloseRequestedCallback;
   TSetBackgroundEffect setBackgroundEffect;
+  // Appended, never inserted: runner code and the Dart FFI bindings both read
+  // this struct by field order.
+  TSetWindowEventCallback setWindowEventCallback;
 } BDWPublicAPI;
 
 } // namespace bitsdojo_window

@@ -88,13 +88,17 @@ typedef DSetPositionForWindow = int Function(
 final DSetPositionForWindow setPositionForWindowNative =
     _publicAPI.ref.setPositionForWindow.asFunction();
 
+/// Shared scratch for the two-double out/in params, for the same reason as
+/// `_scratchRect` in window_util.dart: these run per animation frame and inside
+/// widget builds, and a calloc/free pair per call bought nothing. Synchronous
+/// FFI that never re-enters Dart, main isolate only.
+final Pointer<BDWOffset> _scratchOffset = newBDWOffset();
+
 bool setPositionForWindow(int window, ui.Offset offset) {
-  final Pointer<BDWOffset> offsetPointer = newBDWOffset();
-  offsetPointer.ref
+  _scratchOffset.ref
     ..x = offset.dx
     ..y = offset.dy;
-  int result = setPositionForWindowNative(window, offsetPointer);
-  calloc.free(offsetPointer);
+  int result = setPositionForWindowNative(window, _scratchOffset);
   return result == BDW_SUCCESS ? true : false;
 }
 
@@ -183,15 +187,13 @@ typedef DGetTitleBarButtonSize = int Function(
 final DGetTitleBarButtonSize _getTitleBarButtonSize =
     _publicAPI.ref.getTitleBarButtonSize.asFunction();
 ui.Size getTitleBarButtonSize(int window) {
-  final size = newBDWOffset();
-  final result = _getTitleBarButtonSize(window, size);
+  // Called from WindowButton.build, which rebuilds on every hover state change,
+  // so this used to allocate three times per title bar per hover frame.
+  final result = _getTitleBarButtonSize(window, _scratchOffset);
   if (result != BDW_SUCCESS) {
-    calloc.free(size);
     return ui.Size.zero;
   }
-  final buttonSize = ui.Size(size.ref.x, size.ref.y);
-  calloc.free(size);
-  return buttonSize;
+  return ui.Size(_scratchOffset.ref.x, _scratchOffset.ref.y);
 }
 
 // getWindowScaleFactor
@@ -253,7 +255,7 @@ typedef DSetWindowButtonOffset = void Function(
 final DSetWindowButtonOffset setWindowButtonOffset =
     _publicAPI.ref.setWindowButtonOffset.asFunction();
 
-class BDWPublicAPI extends Struct {
+final class BDWPublicAPI extends Struct {
   external Pointer<NativeFunction<TGetAppWindow>> getAppWindow;
   external Pointer<NativeFunction<TSetWindowCanBeShown>> setWindowCanBeShown;
   external Pointer<NativeFunction<TSetInsideDoWhenWindowReady>>
@@ -295,7 +297,7 @@ class BDWPublicAPI extends Struct {
       setWindowButtonOffset;
 }
 
-class BDWAPI extends Struct {
+final class BDWAPI extends Struct {
   external Pointer<BDWPublicAPI> publicAPI;
 }
 

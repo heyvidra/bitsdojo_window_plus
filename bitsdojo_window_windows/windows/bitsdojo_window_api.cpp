@@ -17,7 +17,8 @@ BDWPublicAPI publicAPI = {isBitsdojoWindowLoaded,
                           isAlwaysOnTop,
                           setAlwaysOnTop,
                           setCloseRequestedCallback,
-                          setBackgroundEffect};
+                          setBackgroundEffect,
+                          setWindowEventCallback};
 } // namespace bitsdojo_window
 
 BDWAPI bdwAPI = {&bitsdojo_window::publicAPI, &bitsdojo_window::privateAPI};

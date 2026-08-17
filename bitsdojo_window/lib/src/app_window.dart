@@ -130,6 +130,18 @@ DesktopWindow getWindowForHandle(int handle) {
   return _platform.getWindowForHandle(handle);
 }
 
+/// The monitors attached to the machine, in no guaranteed order. Empty when the
+/// platform can't enumerate them.
+///
+/// Coordinates are logical pixels in the same space as `appWindow.position`, so
+/// placing a window on a chosen display is direct:
+///
+/// ```dart
+/// final display = (await getDisplays()).firstWhere((d) => !d.isPrimary);
+/// appWindow.position = display.workArea.topLeft;
+/// ```
+Future<List<Display>> getDisplays() => _platform.getDisplays();
+
 /// Shows an OS-native alert owned by THIS window — a sheet on macOS, a
 /// window-modal dialog on Windows and Linux — and completes with the index of
 /// the pressed button in [buttons], or -1 if it was dismissed without one.

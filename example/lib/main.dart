@@ -137,6 +137,9 @@ class _MyHomePageState extends State<MyHomePage> {
   int _singletonCounter = 0;
   int _inspectorCounter = 0;
   String _lastNativeUIResult = 'nothing yet';
+  final List<String> _windowEventLog = [];
+  List<Display> _displays = const [];
+  StreamSubscription<WindowEvent>? _eventSubscription;
   final Map<DesktopWindowButton, bool> _buttonVisibility = {
     DesktopWindowButton.close: true,
     DesktopWindowButton.minimize: true,
@@ -157,15 +160,45 @@ class _MyHomePageState extends State<MyHomePage> {
     _currentEffect = _supportsBackgroundEffects
         ? WindowEffect.acrylic
         : WindowEffect.disabled;
+    _watchWindowEvents();
+    _refreshDisplays();
   }
 
   void _onWindowChanged() {
     if (mounted) setState(() {});
   }
 
+  void _watchWindowEvents() {
+    _eventSubscription = appWindow.events.listen((event) {
+      final label = switch (event) {
+        WindowFocused() => 'focused',
+        WindowBlurred() => 'blurred',
+        WindowMoved(:final position) =>
+          'moved ${position.dx.toStringAsFixed(0)},'
+              '${position.dy.toStringAsFixed(0)}',
+        WindowResized(:final size) => 'resized '
+            '${size.width.toStringAsFixed(0)}x${size.height.toStringAsFixed(0)}',
+        WindowMinimized() => 'minimized',
+        WindowMaximized() => 'maximized',
+        WindowRestored() => 'restored',
+      };
+      if (!mounted) return;
+      setState(() {
+        _windowEventLog.insert(0, label);
+        if (_windowEventLog.length > 6) _windowEventLog.removeLast();
+      });
+    });
+  }
+
+  Future<void> _refreshDisplays() async {
+    final displays = await getDisplays();
+    if (mounted) setState(() => _displays = displays);
+  }
+
   @override
   void dispose() {
     appWindow.changes.removeListener(_onWindowChanged);
+    _eventSubscription?.cancel();
     _titleController.dispose();
     super.dispose();
   }
@@ -642,23 +675,19 @@ class _MyHomePageState extends State<MyHomePage> {
               _reportNativeUI('confirm: $confirmed');
             },
           ),
-          GestureDetector(
-            onSecondaryTapDown: (details) async {
-              final picked = await showNativeMenu(
-                const [
-                  NativeMenuItem('cut', 'Cut'),
-                  NativeMenuItem('copy', 'Copy'),
-                  NativeMenuItem('paste', 'Paste', enabled: false),
-                  NativeMenuItem.separator(),
-                  NativeMenuItem('view', 'View', submenu: [
-                    NativeMenuItem('wrap', 'Wrap lines', checked: true),
-                    NativeMenuItem('whitespace', 'Show whitespace'),
-                  ]),
-                ],
-                position: details.globalPosition,
-              );
-              _reportNativeUI('menu: ${picked ?? 'dismissed'}');
-            },
+          ContextMenuRegion(
+            items: const [
+              NativeMenuItem('cut', 'Cut'),
+              NativeMenuItem('copy', 'Copy'),
+              NativeMenuItem('paste', 'Paste', enabled: false),
+              NativeMenuItem.separator(),
+              NativeMenuItem('view', 'View', submenu: [
+                NativeMenuItem('wrap', 'Wrap lines', checked: true),
+                NativeMenuItem('whitespace', 'Show whitespace'),
+              ]),
+            ],
+            onSelected: (id) => _reportNativeUI('menu: $id'),
+            onDismissed: () => _reportNativeUI('menu: dismissed'),
             child: Container(
               width: double.infinity,
               padding: const EdgeInsets.symmetric(vertical: 24),
@@ -676,6 +705,47 @@ class _MyHomePageState extends State<MyHomePage> {
           ),
           const SizedBox(height: 12),
           _buildDataCard('Last Result', _lastNativeUIResult, Colors.indigo),
+        ]),
+        _buildSection('Window Events & Displays', [
+          _buildPlatformNote(
+            'appWindow.events streams what the OS did to THIS window. Drag, '
+            'resize, minimize or click away and watch the log fill.',
+          ),
+          const SizedBox(height: 8),
+          _buildDataCard(
+            'Last Events (newest first)',
+            _windowEventLog.isEmpty ? 'nothing yet' : _windowEventLog.join('\n'),
+            Colors.deepPurple,
+          ),
+          const Divider(),
+          _buildButton(
+            icon: Icons.monitor,
+            label: 'Refresh Displays',
+            onPressed: _refreshDisplays,
+          ),
+          for (final display in _displays)
+            _buildInlineStat(
+              '${display.name}${display.isPrimary ? ' (primary)' : ''}',
+              '${display.bounds.width.toStringAsFixed(0)}x'
+                  '${display.bounds.height.toStringAsFixed(0)} @'
+                  '${display.scaleFactor}x',
+            ),
+          if (_displays.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            _buildButton(
+              icon: Icons.open_in_new,
+              label: 'Move to Other Display',
+              onPressed: () {
+                // The whole point of enumerating displays: place a window on a
+                // monitor the user picked, not just "wherever".
+                final other = _displays.firstWhere(
+                  (d) => !d.bounds.contains(appWindow.position),
+                  orElse: () => _displays.first,
+                );
+                appWindow.position = other.workArea.topLeft;
+              },
+            ),
+          ],
         ]),
       ],
     );

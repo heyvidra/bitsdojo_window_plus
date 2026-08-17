@@ -1,3 +1,4 @@
+export 'src/widgets/context_menu_region.dart';
 export 'src/widgets/window_border.dart';
 export 'src/widgets/window_button.dart';
 export 'src/widgets/window_caption.dart';
@@ -13,4 +14,13 @@ export 'package:bitsdojo_window_platform_interface/bitsdojo_window_platform_inte
         WindowEffect,
         DesktopWindowButton,
         NativeAlertStyle,
-        NativeMenuItem;
+        NativeMenuItem,
+        Display,
+        WindowEvent,
+        WindowFocused,
+        WindowBlurred,
+        WindowMoved,
+        WindowResized,
+        WindowMinimized,
+        WindowMaximized,
+        WindowRestored;

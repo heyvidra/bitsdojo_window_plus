@@ -61,7 +61,7 @@ typedef Void TSetAlwaysOnTop(IntPtr window, Int8 value);
 typedef DAlwaysOnTop = void Function(int window, int value);
 final DAlwaysOnTop setAlwaysOnTop = _publicAPI.ref.setAlwaysOnTop.asFunction();
 
-class BDWPublicAPI extends Struct {
+final class BDWPublicAPI extends Struct {
   external Pointer<NativeFunction<TIsBitsdojoWindowLoaded>>
       isBitsdojoWindowLoaded;
   external Pointer<NativeFunction<TGetAppWindow>> getAppWindow;
@@ -92,7 +92,7 @@ typedef DSetBackgroundEffect = void Function(int window, int effect);
 final DSetBackgroundEffect setBackgroundEffect =
     _publicAPI.ref.setBackgroundEffect.asFunction();
 
-class BDWAPI extends Struct {
+final class BDWAPI extends Struct {
   external Pointer<BDWPublicAPI> publicAPI;
 }
 

@@ -3,6 +3,7 @@
 #include "./include/bitsdojo_window_windows/bitsdojo_window_plugin.h"
 #include "./include/bitsdojo_window_windows/multi_window_manager.h"
 #include "./window_util.h"
+#include <algorithm>
 #include <dwmapi.h>
 #include <math.h>
 #include <windows.h>
@@ -31,6 +32,11 @@ struct WindowState {
   int window_cut_on_maximize = 0;
   int background_effect = 0;
   TCloseRequestedCallback closeRequestedCallback = nullptr;
+  TWindowEventCallback windowEventCallback = nullptr;
+  // Last geometry reported to Dart, so WM_WINDOWPOSCHANGED — which fires for
+  // plenty of things that move nothing — only emits on a real change.
+  RECT last_reported_rect = {0, 0, 0, 0};
+  bool was_maximized = false;
 };
 
 const wchar_t *BDW_WINDOW_STATE = L"BDW_WindowState";
@@ -180,8 +186,8 @@ void forceChildRefresh(HWND window) {
   RECT rc;
   GetClientRect(window, &rc);
   int inset = 0;
-  int width = max(0, (rc.right - rc.left));
-  int height = max(0, (rc.bottom - rc.top));
+  int width = std::max<LONG>(0, rc.right - rc.left);
+  int height = std::max<LONG>(0, rc.bottom - rc.top);
   SetWindowPos(state->flutter_child_window, 0, inset, inset, width, height,
                SWP_NOACTIVATE);
 }
@@ -190,12 +196,13 @@ int getResizeMargin(HWND window) {
   UINT currentDpi = GetDpiForWindow(window);
   int resizeBorder = GetSystemMetricsForDpi(SM_CXSIZEFRAME, currentDpi);
   int borderPadding = GetSystemMetricsForDpi(SM_CXPADDEDBORDER, currentDpi);
-  int minimumInteractiveMargin = max(8, static_cast<int>(ceil(6.0 * currentDpi / 96.0)));
+  int minimumInteractiveMargin =
+      std::max(8, static_cast<int>(ceil(6.0 * currentDpi / 96.0)));
   bool isMaximized = IsZoomed(window);
   if (isMaximized) {
-    return max(borderPadding, minimumInteractiveMargin);
+    return std::max(borderPadding, minimumInteractiveMargin);
   }
-  return max(resizeBorder + borderPadding, minimumInteractiveMargin);
+  return std::max(resizeBorder + borderPadding, minimumInteractiveMargin);
 }
 
 void extendIntoClientArea(HWND hwnd) {
@@ -354,8 +361,8 @@ void adjustChildWindowSize(HWND window) {
   RECT clientRect;
   GetClientRect(window, &clientRect);
   int inset = 0;
-  int width = max(0, (clientRect.right - clientRect.left));
-  int height = max(0, (clientRect.bottom - clientRect.top));
+  int width = std::max<LONG>(0, clientRect.right - clientRect.left);
+  int height = std::max<LONG>(0, clientRect.bottom - clientRect.top);
   SetWindowPos(state->flutter_child_window, 0, inset, inset, width, height,
                SWP_NOACTIVATE);
 }
@@ -412,6 +419,53 @@ void setCloseRequestedCallback(HWND window, TCloseRequestedCallback callback) {
   state->closeRequestedCallback = callback;
 }
 
+void setWindowEventCallback(HWND window, TWindowEventCallback callback) {
+  auto state = getOrCreateWindowState(window);
+  state->windowEventCallback = callback;
+}
+
+namespace {
+
+void emitWindowEvent(HWND window, WindowState *state, int code, double a = 0,
+                     double b = 0) {
+  if (state == nullptr || state->windowEventCallback == nullptr)
+    return;
+  state->windowEventCallback(window, code, a, b);
+}
+
+// Emits moved / resized when the window's frame actually changed. Dart reads
+// position and size in logical pixels, so the physical frame is divided by the
+// window's scale here — the same conversion getRectForWindow does.
+void emitGeometryEvents(HWND window, WindowState *state) {
+  if (state == nullptr || state->windowEventCallback == nullptr)
+    return;
+
+  RECT rect;
+  if (!GetWindowRect(window, &rect))
+    return;
+
+  const RECT &last = state->last_reported_rect;
+  const bool moved = (rect.left != last.left) || (rect.top != last.top);
+  const bool resized = ((rect.right - rect.left) != (last.right - last.left)) ||
+                       ((rect.bottom - rect.top) != (last.bottom - last.top));
+  if (!moved && !resized)
+    return;
+  state->last_reported_rect = rect;
+
+  const double scale = GetDpiForWindow(window) / 96.0;
+  if (moved) {
+    emitWindowEvent(window, state, kBdwWindowMoved, rect.left / scale,
+                    rect.top / scale);
+  }
+  if (resized) {
+    emitWindowEvent(window, state, kBdwWindowResized,
+                    (rect.right - rect.left) / scale,
+                    (rect.bottom - rect.top) / scale);
+  }
+}
+
+} // namespace
+
 LRESULT CALLBACK main_window_proc(HWND window, UINT message, WPARAM wparam,
                                   LPARAM lparam, UINT_PTR sublssID,
                                   DWORD_PTR refData) {
@@ -458,12 +512,38 @@ LRESULT CALLBACK main_window_proc(HWND window, UINT message, WPARAM wparam,
     break;
   }
   case WM_SIZE: {
+    // Emitted before the early returns below: a minimize reaches us with
+    // during_minimize set and returns immediately, which is exactly the case
+    // that has to report kBdwWindowMinimized.
+    switch (wparam) {
+    case SIZE_MINIMIZED:
+      state->was_maximized = false;
+      emitWindowEvent(window, state, kBdwWindowMinimized);
+      break;
+    case SIZE_MAXIMIZED:
+      state->was_maximized = true;
+      emitWindowEvent(window, state, kBdwWindowMaximized);
+      break;
+    case SIZE_RESTORED:
+      state->was_maximized = false;
+      emitWindowEvent(window, state, kBdwWindowRestored);
+      break;
+    default:
+      break;
+    }
+
     if (state->during_minimize == TRUE) {
       return 0;
     }
     if (state->bypass_wm_size == TRUE) {
       return DefWindowProc(window, message, wparam, lparam);
     }
+    break;
+  }
+  case WM_ACTIVATE: {
+    emitWindowEvent(window, state,
+                    (wparam == WA_INACTIVE) ? kBdwWindowBlurred
+                                            : kBdwWindowFocused);
     break;
   }
   case WM_SYSCOMMAND: {
@@ -516,6 +596,10 @@ LRESULT CALLBACK main_window_proc(HWND window, UINT message, WPARAM wparam,
         adjustChildWindowSize(window);
       }
     }
+    // Geometry events come from here rather than WM_SIZE + WM_MOVE: this
+    // message is the one that reports both at once, and emitGeometryEvents
+    // filters out the many WM_WINDOWPOSCHANGEDs that change neither.
+    emitGeometryEvents(window, state);
     break;
   }
   case WM_GETMINMAXINFO: {

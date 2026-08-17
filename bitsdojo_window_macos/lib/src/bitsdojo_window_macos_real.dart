@@ -74,6 +74,12 @@ class BitsdojoWindowMacOS extends BitsdojoWindowPlatform {
           _appWindow.onArgumentsChanged!();
         }
       }
+    } else if (call.method == 'windowEvent') {
+      final event = decodeWindowEvent(call.arguments as Map);
+      if (event == null) return;
+      final handle = call.arguments['handle'] as int?;
+      final window = handle == null ? _appWindow : getWindowForHandle(handle);
+      window.emitWindowEvent(event);
     } else if (call.method == 'windowClosed') {
       final name = call.arguments['name'] as String?;
       if (name != null) {

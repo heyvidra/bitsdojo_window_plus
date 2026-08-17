@@ -2,6 +2,7 @@
 #include <gtk/gtk.h>
 
 #include "./gtk_utils.h"
+#include "./window_impl.h"
 #include "./window_info.h"
 #include "include/bitsdojo_window_linux/bitsdojo_window_plugin.h"
 
@@ -330,6 +331,15 @@ static gboolean onWindowEventAfter(GtkWidget *text_view, GdkEvent *event,
 gboolean onWindowSizeMove(GtkWidget *widget, GdkEventConfigure *event,
                           BitsdojoWindowImpl *self) {
     auto windowInfo = self->_getWindowInfo();
+    // configure-event fires for a move, a resize, or both, so compare against
+    // what we last recorded and emit only what actually changed. Reported in
+    // the same values the `position` / `size` getters read back out of
+    // windowInfo, so an event can't disagree with a property read after it.
+    const bool moved =
+        (windowInfo->x != event->x) || (windowInfo->y != event->y);
+    const bool resized = (windowInfo->width != event->width) ||
+                         (windowInfo->height != event->height);
+
     windowInfo->x = event->x;
     windowInfo->y = event->y;
     windowInfo->width = event->width;
@@ -344,6 +354,41 @@ gboolean onWindowSizeMove(GtkWidget *widget, GdkEventConfigure *event,
     getScaleFactorForWindow(self->handle, &scaleFactor);
     windowInfo->scaleFactor = scaleFactor;
 
+    if (moved) {
+        bdwEmitWindowEvent(kBdwWindowMoved, event->x, event->y);
+    }
+    if (resized) {
+        bdwEmitWindowEvent(kBdwWindowResized, event->width, event->height);
+    }
+
+    return FALSE;
+}
+
+gboolean onWindowStateChanged(GtkWidget *widget, GdkEventWindowState *event,
+                              BitsdojoWindowImpl *self) {
+    // changed_mask says which bits moved; new_window_state says where they
+    // landed. A restore shows up as one of the two bits clearing.
+    if (event->changed_mask & GDK_WINDOW_STATE_ICONIFIED) {
+        bdwEmitWindowEvent((event->new_window_state &
+                            GDK_WINDOW_STATE_ICONIFIED)
+                               ? kBdwWindowMinimized
+                               : kBdwWindowRestored,
+                           0, 0);
+    }
+    if (event->changed_mask & GDK_WINDOW_STATE_MAXIMIZED) {
+        bdwEmitWindowEvent((event->new_window_state &
+                            GDK_WINDOW_STATE_MAXIMIZED)
+                               ? kBdwWindowMaximized
+                               : kBdwWindowRestored,
+                           0, 0);
+    }
+    return FALSE;
+}
+
+gboolean onWindowFocusChanged(GtkWidget *widget, GdkEventFocus *event,
+                              BitsdojoWindowImpl *self) {
+    // One handler for both signals: GdkEventFocus.in carries the direction.
+    bdwEmitWindowEvent(event->in ? kBdwWindowFocused : kBdwWindowBlurred, 0, 0);
     return FALSE;
 }
 
@@ -369,6 +414,15 @@ void enhanceFlutterView(GtkWidget *flutterView) {
                      appWindow);
     g_signal_connect(topLevelWindow, "configure-event",
                      G_CALLBACK(bitsdojo_window::onWindowSizeMove), appWindow);
+    g_signal_connect(topLevelWindow, "window-state-event",
+                     G_CALLBACK(bitsdojo_window::onWindowStateChanged),
+                     appWindow);
+    g_signal_connect(topLevelWindow, "focus-in-event",
+                     G_CALLBACK(bitsdojo_window::onWindowFocusChanged),
+                     appWindow);
+    g_signal_connect(topLevelWindow, "focus-out-event",
+                     G_CALLBACK(bitsdojo_window::onWindowFocusChanged),
+                     appWindow);
     g_signal_connect(topLevelWindow, "destroy",
                      G_CALLBACK(bitsdojo_window::onWindowDestroy), nullptr);
     appWindow->findEventBox(flutterView);

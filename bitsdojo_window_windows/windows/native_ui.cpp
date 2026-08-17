@@ -1,5 +1,9 @@
 #include "./native_ui.h"
 
+// GetDpiForMonitor. Per-monitor DPI is the whole point of enumerating displays
+// on a mixed-DPI desktop, so this is worth the Shcore link.
+#include <shellscalingapi.h>
+
 #include <optional>
 #include <vector>
 
@@ -54,6 +58,18 @@ int GetInt(const flutter::EncodableMap& map, const char* key, int fallback) {
   return fallback;
 }
 
+std::string Utf8(const wchar_t* utf16) {
+  if (utf16 == nullptr || utf16[0] == L'\0') return std::string();
+  int size = WideCharToMultiByte(CP_UTF8, 0, utf16, -1, nullptr, 0, nullptr,
+                                 nullptr);
+  if (size <= 1) return std::string();
+  // size counts the terminating NUL, which std::string carries implicitly.
+  std::string result(static_cast<size_t>(size) - 1, '\0');
+  WideCharToMultiByte(CP_UTF8, 0, utf16, -1, result.data(), size, nullptr,
+                      nullptr);
+  return result;
+}
+
 std::wstring Utf16(const std::string& utf8) {
   if (utf8.empty()) return std::wstring();
   int size = MultiByteToWideChar(CP_UTF8, 0, utf8.data(),
@@ -101,6 +117,65 @@ void AppendItems(HMENU menu, const flutter::EncodableList& items,
 }
 
 }  // namespace
+
+flutter::EncodableList GetDisplays() {
+  struct Collector {
+    flutter::EncodableList displays;
+  } collector;
+
+  // EnumDisplayMonitors is the only enumeration that reports the same monitor
+  // set the window manager places windows on, including mirrored setups.
+  auto callback = [](HMONITOR monitor, HDC, LPRECT, LPARAM data) -> BOOL {
+    auto* collector = reinterpret_cast<Collector*>(data);
+
+    MONITORINFOEXW info;
+    info.cbSize = sizeof(info);
+    if (!GetMonitorInfoW(monitor, &info))
+      return TRUE; // Skip this one, keep enumerating.
+
+    // Per-monitor DPI: on a mixed-DPI desktop each monitor scales differently,
+    // so the physical->logical divisor has to come from the monitor itself.
+    UINT dpi_x = 96;
+    UINT dpi_y = 96;
+    if (FAILED(GetDpiForMonitor(monitor, MDT_EFFECTIVE_DPI, &dpi_x, &dpi_y))) {
+      dpi_x = 96;
+      dpi_y = 96;
+    }
+    const double scale = dpi_x / 96.0;
+
+    flutter::EncodableMap display;
+    const std::string name = Utf8(info.szDevice);
+    display[flutter::EncodableValue("id")] = flutter::EncodableValue(name);
+    display[flutter::EncodableValue("name")] = flutter::EncodableValue(name);
+    display[flutter::EncodableValue("x")] =
+        flutter::EncodableValue(info.rcMonitor.left / scale);
+    display[flutter::EncodableValue("y")] =
+        flutter::EncodableValue(info.rcMonitor.top / scale);
+    display[flutter::EncodableValue("width")] = flutter::EncodableValue(
+        (info.rcMonitor.right - info.rcMonitor.left) / scale);
+    display[flutter::EncodableValue("height")] = flutter::EncodableValue(
+        (info.rcMonitor.bottom - info.rcMonitor.top) / scale);
+    display[flutter::EncodableValue("workX")] =
+        flutter::EncodableValue(info.rcWork.left / scale);
+    display[flutter::EncodableValue("workY")] =
+        flutter::EncodableValue(info.rcWork.top / scale);
+    display[flutter::EncodableValue("workWidth")] =
+        flutter::EncodableValue((info.rcWork.right - info.rcWork.left) / scale);
+    display[flutter::EncodableValue("workHeight")] =
+        flutter::EncodableValue((info.rcWork.bottom - info.rcWork.top) / scale);
+    display[flutter::EncodableValue("scaleFactor")] =
+        flutter::EncodableValue(scale);
+    display[flutter::EncodableValue("isPrimary")] =
+        flutter::EncodableValue((info.dwFlags & MONITORINFOF_PRIMARY) != 0);
+
+    collector->displays.push_back(flutter::EncodableValue(display));
+    return TRUE;
+  };
+
+  EnumDisplayMonitors(nullptr, nullptr, callback,
+                      reinterpret_cast<LPARAM>(&collector));
+  return collector.displays;
+}
 
 int ShowAlert(HWND owner, const flutter::EncodableMap& args) {
   std::wstring title = Utf16(GetString(args, "title"));

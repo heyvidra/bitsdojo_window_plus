@@ -53,6 +53,14 @@ class BitsdojoWindowWindows extends BitsdojoWindowPlatform {
       }
     } else if (call.method == 'windowReady') {
       _applyWindowInfo(call.arguments);
+    } else if (call.method == 'windowEvent') {
+      final arguments = call.arguments as Map?;
+      if (arguments == null) return;
+      final event = decodeWindowEvent(arguments);
+      if (event == null) return;
+      final handle = arguments['handle'] as int?;
+      final window = handle != null ? getWindowForHandle(handle) : appWindow;
+      window.emitWindowEvent(event);
     } else if (call.method == 'windowClosed') {
       final name = (call.arguments as Map?)?['name'] as String?;
       if (name != null) {

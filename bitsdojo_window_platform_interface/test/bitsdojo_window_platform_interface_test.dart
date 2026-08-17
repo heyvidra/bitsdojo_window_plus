@@ -193,7 +193,22 @@ void main() {
       expect(index, 1);
       expect(seen?.method, 'showNativeAlert');
       expect(seen?.arguments['buttons'], ['Delete', 'Cancel']);
-      expect(seen?.arguments['style'], NativeAlertStyle.critical.index);
+      // The literal, not `.index` on both sides — that form compares the enum
+      // to itself and would keep passing if the values were reordered, which is
+      // exactly the break it looks like it is guarding against. 2 is what
+      // `case 2:` matches in NativeUI.swift, windows/native_ui.cpp and
+      // linux/native_ui.cpp.
+      expect(seen?.arguments['style'], 2);
+    });
+
+    test('wire values the three native switches match are pinned', () {
+      // Each of these ordinals is read by a bare `case N:` in native code that
+      // Dart cannot see, so reordering an enum silently changes behaviour on
+      // every platform. Appending stays safe; renumbering does not.
+      expect(NativeAlertStyle.values.map((s) => s.index), [0, 1, 2]);
+      expect(WindowEventCode.values.map((c) => c.index),
+          [0, 1, 2, 3, 4, 5, 6]);
+      expect(DesktopWindowButton.values.map((b) => b.index), [0, 1, 2]);
     });
 
     test('a missing plugin reads as a dismissal, not an exception', () async {
@@ -205,6 +220,150 @@ void main() {
         await platform.showNativeMenu(const [NativeMenuItem('copy', 'Copy')]),
         isNull,
       );
+    });
+  });
+
+  group('getRectOnScreen', () {
+    // A screen that is neither at the origin nor square, so an off-by-a-width
+    // bug can't hide behind zeros or symmetry.
+    const screen = Rect.fromLTWH(100, 50, 1000, 800);
+    const size = Size(400, 300);
+
+    test('anchors the window inside the screen for every named alignment', () {
+      expect(getRectOnScreen(size, Alignment.topLeft, screen),
+          const Rect.fromLTRB(100, 50, 500, 350));
+      expect(getRectOnScreen(size, Alignment.topCenter, screen),
+          const Rect.fromLTRB(400, 50, 800, 350));
+      expect(getRectOnScreen(size, Alignment.topRight, screen),
+          const Rect.fromLTRB(700, 50, 1100, 350));
+      expect(getRectOnScreen(size, Alignment.centerLeft, screen),
+          const Rect.fromLTRB(100, 300, 500, 600));
+      expect(getRectOnScreen(size, Alignment.center, screen),
+          const Rect.fromLTRB(400, 300, 800, 600));
+      expect(getRectOnScreen(size, Alignment.centerRight, screen),
+          const Rect.fromLTRB(700, 300, 1100, 600));
+      expect(getRectOnScreen(size, Alignment.bottomCenter, screen),
+          const Rect.fromLTRB(400, 550, 800, 850));
+      expect(getRectOnScreen(size, Alignment.bottomRight, screen),
+          const Rect.fromLTRB(700, 550, 1100, 850));
+    });
+
+    test('bottomLeft sits on the screen, not one width to the left of it', () {
+      // Regression: this returned Rect.fromLTRB(-300, 550, 100, 850) — the
+      // window placed entirely off the left edge — because the old code
+      // subtracted the window width from the screen's LEFT edge.
+      expect(getRectOnScreen(size, Alignment.bottomLeft, screen),
+          const Rect.fromLTRB(100, 550, 500, 850));
+    });
+
+    test('an alignment that is not one of the nine named ones still places',
+        () {
+      // Regression: anything outside the named set fell through to Rect.zero,
+      // collapsing the window instead of positioning it.
+      expect(getRectOnScreen(size, const Alignment(0, 0.5), screen),
+          const Rect.fromLTRB(400, 425, 800, 725));
+    });
+
+    test('every alignment keeps the requested size', () {
+      for (final alignment in const [
+        Alignment.topLeft,
+        Alignment.bottomLeft,
+        Alignment.bottomRight,
+        Alignment(-0.3, 0.7),
+      ]) {
+        expect(getRectOnScreen(size, alignment, screen).size, size);
+      }
+    });
+  });
+
+  group('window events', () {
+    test('decodes each code with its payload', () {
+      expect(decodeWindowEvent({'type': 0}), isA<WindowFocused>());
+      expect(decodeWindowEvent({'type': 1}), isA<WindowBlurred>());
+      expect(decodeWindowEvent({'type': 4}), isA<WindowMinimized>());
+      expect(decodeWindowEvent({'type': 5}), isA<WindowMaximized>());
+      expect(decodeWindowEvent({'type': 6}), isA<WindowRestored>());
+
+      final moved = decodeWindowEvent({'type': 2, 'x': 12.0, 'y': -34.0});
+      expect((moved as WindowMoved).position, const Offset(12, -34));
+
+      final resized =
+          decodeWindowEvent({'type': 3, 'width': 800, 'height': 600.5});
+      // Ints are accepted for geometry: the standard codec picks int over
+      // double for whole numbers, so a whole-pixel size arrives as an int.
+      expect((resized as WindowResized).size, const Size(800, 600.5));
+    });
+
+    test('an unknown or malformed event decodes to null, never throws', () {
+      expect(decodeWindowEvent({'type': 99}), isNull);
+      expect(decodeWindowEvent({'type': -1}), isNull);
+      expect(decodeWindowEvent({'type': 'focused'}), isNull);
+      expect(decodeWindowEvent(const {}), isNull);
+      // Geometry codes without geometry: dropping beats a bogus Offset.zero.
+      expect(decodeWindowEvent({'type': 2}), isNull);
+      expect(decodeWindowEvent({'type': 3, 'width': 800}), isNull);
+    });
+
+    test('events reach listeners and stop after cancel', () async {
+      final window = MockDesktopWindow();
+      final seen = <WindowEvent>[];
+      final subscription = window.events.listen(seen.add);
+      addTearDown(subscription.cancel);
+
+      window.emitWindowEvent(const WindowFocused());
+      window.emitWindowEvent(const WindowMoved(Offset(5, 6)));
+      await pumpEventQueue();
+      expect(seen, hasLength(2));
+      expect((seen[1] as WindowMoved).position, const Offset(5, 6));
+
+      await subscription.cancel();
+      window.emitWindowEvent(const WindowBlurred());
+      await pumpEventQueue();
+      expect(seen, hasLength(2));
+    });
+
+    test('emitting with nobody listening is harmless', () {
+      // Broadcast streams drop events that arrive unheard; the point is that
+      // native code can emit freely without checking for subscribers.
+      MockDesktopWindow().emitWindowEvent(const WindowFocused());
+    });
+  });
+
+  group('Display', () {
+    test('parses a full payload', () {
+      final display = Display.fromMap({
+        'id': '4',
+        'name': 'Dell S2716DG',
+        'x': -832.0,
+        'y': -1440.0,
+        'width': 2560.0,
+        'height': 1440.0,
+        'workX': -832.0,
+        'workY': -1409.0,
+        'workWidth': 2560.0,
+        'workHeight': 1409.0,
+        'scaleFactor': 1.0,
+        'isPrimary': false,
+      })!;
+      expect(display.id, '4');
+      expect(display.bounds, const Rect.fromLTWH(-832, -1440, 2560, 1440));
+      expect(display.workArea.top, -1409);
+      expect(display.isPrimary, isFalse);
+    });
+
+    test('a missing work area falls back to the full bounds', () {
+      final display = Display.fromMap({
+        'x': 0,
+        'y': 0,
+        'width': 1280.0,
+        'height': 900.0,
+      })!;
+      expect(display.workArea, display.bounds);
+      expect(display.scaleFactor, 1.0);
+    });
+
+    test('without bounds there is no display at all', () {
+      expect(Display.fromMap(const {'name': 'nowhere'}), isNull);
     });
   });
 

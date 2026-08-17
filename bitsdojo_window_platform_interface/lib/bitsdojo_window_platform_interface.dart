@@ -3,11 +3,14 @@ import 'dart:ui';
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 
 import 'method_channel_bitsdojo_window.dart';
+import './display.dart';
 import './native_ui.dart';
 import './window.dart';
 
+export './display.dart';
 export './native_ui.dart';
 export './window.dart';
+export './window_event.dart';
 export './window_common.dart';
 export './window_not_implemented.dart';
 export './platform_not_implemented.dart';
@@ -142,6 +145,16 @@ abstract class BitsdojoWindowPlatform extends PlatformInterface {
     Offset? position,
   }) {
     return _channelInstance.showNativeMenu(items, position: position);
+  }
+
+  /// The monitors attached to the machine, in no guaranteed order.
+  ///
+  /// Empty on a platform that can't enumerate them: code placing a window on a
+  /// chosen display needs a fallback for "only one screen" anyway, so an empty
+  /// list is the useful answer and an exception would force every call site to
+  /// catch. Coordinates share `DesktopWindow.position`'s space.
+  Future<List<Display>> getDisplays() {
+    return _channelInstance.getDisplays();
   }
 
   void setAlwaysOnTop(bool onTop) {

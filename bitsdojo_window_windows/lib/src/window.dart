@@ -13,6 +13,17 @@ import './window_util.dart';
 
 var isInsideDoWhenWindowReady = false;
 
+/// One scratch RECT for the synchronous geometry reads, instead of a
+/// calloc/free pair per call. `rect` is read per animation frame and from inside
+/// the title-bar widgets' build methods, and `size` / `position` each go through
+/// it. Safe to share: GetWindowRect fills it and the ref is read immediately,
+/// with no await and no re-entry in between.
+///
+/// Deliberately NOT applied to setWindowPos / setWindowText in window_util.dart:
+/// those hand their pointer to PostMessage and the native side frees it after
+/// the message is processed, so several can be in flight at once.
+final Pointer<RECT> _scratchRect = calloc<RECT>();
+
 bool isValidHandle(HWND? handle, String operation) {
   if (handle == null) {
     debugPrint("bitsdojo_window: could not $operation - handle is null");
@@ -87,11 +98,8 @@ class WinWindow extends WinDesktopWindow {
 
   Rect get rect {
     if (!isValidHandle(_hwnd, "get rectangle")) return Rect.zero;
-    final winRect = calloc<RECT>();
-    GetWindowRect(_hwnd!, winRect);
-    Rect result = winRect.ref.toRect;
-    calloc.free(winRect);
-    return result;
+    GetWindowRect(_hwnd!, _scratchRect);
+    return _scratchRect.ref.toRect;
   }
 
   set rect(Rect newRect) {

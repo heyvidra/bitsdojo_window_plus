@@ -35,10 +35,13 @@ class WindowBorder extends StatelessWidget {
     }
 
     if (isWindowsApp) {
-      leftBorderWidth += 1 / appWindow.scaleFactor;
-      rightBorderWidth += 1 / appWindow.scaleFactor;
-      bottomBorderWidth += 1 / appWindow.scaleFactor;
-      topBorderWidth += 1 / appWindow.scaleFactor;
+      // Read once: `scaleFactor` is a native call (GetDpiForWindow on Windows),
+      // and this build runs for the whole app's subtree.
+      final devicePixel = 1 / appWindow.scaleFactor;
+      leftBorderWidth += devicePixel;
+      rightBorderWidth += devicePixel;
+      bottomBorderWidth += devicePixel;
+      topBorderWidth += devicePixel;
     }
     final topBorderSide = BorderSide(color: this.color, width: topBorderWidth);
     final leftBorderSide =

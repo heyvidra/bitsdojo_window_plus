@@ -75,6 +75,52 @@ enum NativeUI {
     result(pick.id)
   }
 
+  /// Every attached monitor, described in the same top-left-origin logical
+  /// space as `getRectForWindow` — so `window.position = display.workArea
+  /// .topLeft` lands the window where the caller means.
+  static func displays() -> [[String: Any]] {
+    let screens = NSScreen.screens
+    // The primary screen owns the origin of the global coordinate space, and
+    // its top is the line every other frame is measured down from.
+    guard let primary = screens.first else { return [] }
+    let primaryTop = primary.frame.maxY
+
+    return screens.enumerated().map { index, screen in
+      func flip(_ frame: NSRect) -> [String: Double] {
+        return [
+          "x": frame.origin.x,
+          "y": primaryTop - frame.maxY,
+          "width": frame.width,
+          "height": frame.height,
+        ]
+      }
+
+      let full = flip(screen.frame)
+      let visible = flip(screen.visibleFrame)
+      var display: [String: Any] = [
+        // displayID is stable while the screen stays attached, which is exactly
+        // the contract the Dart side documents.
+        "id": String(
+          describing:
+            screen.deviceDescription[
+              NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber
+            ?? NSNumber(value: index)),
+        "name": screen.localizedName,
+        "scaleFactor": screen.backingScaleFactor,
+        "isPrimary": screen == primary,
+      ]
+      display["x"] = full["x"]
+      display["y"] = full["y"]
+      display["width"] = full["width"]
+      display["height"] = full["height"]
+      display["workX"] = visible["x"]
+      display["workY"] = visible["y"]
+      display["workWidth"] = visible["width"]
+      display["workHeight"] = visible["height"]
+      return display
+    }
+  }
+
   /// Holds the picked id for the lifetime of one popup. NSMenuItem needs a
   /// target object; a closure won't do.
   private final class MenuPick: NSObject {

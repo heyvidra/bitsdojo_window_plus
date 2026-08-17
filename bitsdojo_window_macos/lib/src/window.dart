@@ -100,12 +100,8 @@ class MacOSWindow extends DesktopWindow {
     if (_alignment != null) {
       if (!isValidHandle(handle, "set alignment")) return;
       final screenInfo = getScreenInfoForWindow(handle!);
-      if (screenInfo.workingRect == null) {
-        debugPrint("bitsdojo_window: can't set alignment - workingRect unavailable");
-        return;
-      }
       final windowRect =
-          getRectOnScreen(this.size, _alignment!, screenInfo.workingRect!);
+          getRectOnScreen(this.size, _alignment!, screenInfo.workingRect);
       // workingRect and the position setter share one space now (distance
       // from the full screen top), so the topLeft feeds through unchanged.
       // The old -menuBarHeight fudge compensated for setters and getters
@@ -143,21 +139,21 @@ class MacOSWindow extends DesktopWindow {
   Size get screenSize {
     if (!isValidHandle(handle, "get screenSize")) return Size.zero;
     final screenInfo = getScreenInfoForWindow(handle!);
-    return screenInfo.fullRect?.size ?? Size.zero;
+    return screenInfo.fullRect.size;
   }
 
   @override
   Size get workingScreenSize {
     if (!isValidHandle(handle, "get workingScreenSize")) return Size.zero;
     final screenInfo = getScreenInfoForWindow(handle!);
-    return screenInfo.workingRect?.size ?? Size.zero;
+    return screenInfo.workingRect.size;
   }
 
   @override
   Rect get workingScreenRect {
     if (!isValidHandle(handle, "get workingScreenRect")) return Rect.zero;
     final screenInfo = getScreenInfoForWindow(handle!);
-    return screenInfo.workingRect ?? Rect.zero;
+    return screenInfo.workingRect;
   }
 
   set size(Size newSize) {
@@ -187,12 +183,7 @@ class MacOSWindow extends DesktopWindow {
       setSize(handle!, sizeToSet.width.toInt(), sizeToSet.height.toInt());
     } else {
       final screenInfo = getScreenInfoForWindow(handle!);
-      if (screenInfo.workingRect == null) {
-        debugPrint("bitsdojo_window: can't set size - workingRect unavailable");
-        return;
-      }
-      this.rect =
-          getRectOnScreen(sizeToSet, _alignment!, screenInfo.workingRect!);
+      this.rect = getRectOnScreen(sizeToSet, _alignment!, screenInfo.workingRect);
     }
   }
 

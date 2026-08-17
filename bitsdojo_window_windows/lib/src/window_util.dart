@@ -8,7 +8,7 @@ const BDW_SETWINDOWPOS = 1;
 const BDW_SETWINDOWTEXT = 2;
 const BDW_FORCECHILDREFRESH = 3;
 
-class SWPParam extends Struct {
+final class SWPParam extends Struct {
   @Int32()
   external int x, y, cx, cy, uFlags;
 }
@@ -25,7 +25,7 @@ void setWindowPos(
   PostMessage(hWnd, WM_BDW_ACTION, WPARAM(BDW_SETWINDOWPOS), LPARAM(param.address));
 }
 
-class SWTParam extends Struct {
+final class SWTParam extends Struct {
   external Pointer<Utf16> text;
 }
 

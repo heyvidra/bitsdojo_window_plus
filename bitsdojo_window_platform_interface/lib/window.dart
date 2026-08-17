@@ -1,5 +1,9 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/painting.dart';
+
+import 'window_event.dart';
 
 class _WindowChangeNotifier extends ChangeNotifier {
   void notify() => notifyListeners();
@@ -43,6 +47,23 @@ abstract class DesktopWindow {
   /// For platform implementations: signals [changes] listeners that this
   /// window's identity or arguments were updated.
   void notifyWindowChanged() => _changes.notify();
+
+  final StreamController<WindowEvent> _events =
+      StreamController<WindowEvent>.broadcast();
+
+  /// What the OS did to this window: focus, move, resize, minimize, maximize,
+  /// restore. Broadcast, so several listeners can subscribe, and events that
+  /// arrive with nobody listening are dropped rather than buffered.
+  ///
+  /// Never closed — a window object lives as long as its engine — so there is
+  /// nothing to dispose. Cancel your own subscriptions as usual.
+  ///
+  /// Closing is not here on purpose: use [onClose] to veto a close, and
+  /// top-level `onWindowClosed` to hear about other windows closing.
+  Stream<WindowEvent> get events => _events.stream;
+
+  /// For platform implementations: publishes an event to [events].
+  void emitWindowEvent(WindowEvent event) => _events.add(event);
 
   int? get handle;
   double get scaleFactor;
@@ -121,6 +142,14 @@ abstract class DesktopWindow {
       DesktopWindowButton button, Offset offset) {}
 }
 
+/// A title-bar button.
+///
+/// Crosses the channel as `button.index`, and macOS casts that integer straight
+/// into AppKit's `NSWindowButton` (see `titlebar_button_manager.mm`) — a foreign
+/// ABI this package does not control, where 0/1/2 are close/miniaturize/zoom.
+/// So: **append only**. Reordering or inserting a value silently retargets which
+/// native button gets hidden or moved, with nothing in Dart to catch it. The
+/// ordinals are pinned by a test in the platform interface package.
 enum DesktopWindowButton {
   close,
   minimize,
