@@ -8,4 +8,9 @@ export 'src/window_configuration.dart';
 export 'src/window_integration.dart';
 export 'src/window_router.dart';
 export 'package:bitsdojo_window_platform_interface/bitsdojo_window_platform_interface.dart'
-    show DesktopWindow, WindowEffect, DesktopWindowButton;
+    show
+        DesktopWindow,
+        WindowEffect,
+        DesktopWindowButton,
+        NativeAlertStyle,
+        NativeMenuItem;

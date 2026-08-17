@@ -1,5 +1,6 @@
 ## 0.5.0
-    - Version alignment with the 0.5.0 removal of deprecated no-op native entry points; no functional change in this package.
+    - Native dialog/menu surface: `BitsdojoWindowPlatform.showNativeAlert(...)` and `showNativeMenu(...)`, plus the `NativeMenuItem` / `NativeAlertStyle` types. Both default to delegating to `MethodChannelBitsdojoWindow`, which implements them over the shared `bitsdojo/window` channel and swallows `MissingPluginException` into the neutral result (-1 / null) — so a platform without native UI reads as a dismissal rather than throwing, and callers only ever branch on the value.
+    - Version alignment with the 0.5.0 removal of deprecated no-op native entry points.
 
 ## 0.4.3
     - Version alignment with the 0.4.3 macOS launch-crash fix; no functional change in this package.

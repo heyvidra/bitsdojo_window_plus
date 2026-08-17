@@ -10,6 +10,7 @@ add_library(${PLUGIN_NAME} STATIC
   "bitsdojo_window_api.cpp"
   "bitsdojo_window_plugin.cpp"
   "multi_window_manager.cpp"
+  "native_ui.cpp"
 )
 apply_standard_settings(${PLUGIN_NAME})
 set_target_properties(${PLUGIN_NAME} PROPERTIES

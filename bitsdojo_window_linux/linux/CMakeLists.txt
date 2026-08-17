@@ -10,6 +10,7 @@ set(PLUGIN_NAME "${PROJECT_NAME}_plugin")
 add_library(${PLUGIN_NAME} SHARED
   "api_impl.cpp"
   "multi_window_manager.cpp"
+  "native_ui.cpp"
   "bitsdojo_window_plugin.cpp"
   "window_impl.cpp"
   "window_info.cpp"

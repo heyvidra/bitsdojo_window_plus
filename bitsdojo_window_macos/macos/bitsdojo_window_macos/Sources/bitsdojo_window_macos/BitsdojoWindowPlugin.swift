@@ -441,6 +441,28 @@ public class BitsdojoWindowPlugin: NSObject, FlutterPlugin {
             result(nil)
         }
 
+    case "showNativeAlert":
+        // This engine's own window: the sheet must hang off the window that
+        // asked for it, not off whichever one happens to be key.
+        let window = self.registrar?.viewController?.view.window
+        DispatchQueue.main.async {
+            NativeUI.showAlert(
+                window: window,
+                args: call.arguments as? [String: Any] ?? [:],
+                result: result
+            )
+        }
+
+    case "showNativeMenu":
+        let view = self.registrar?.viewController?.view
+        DispatchQueue.main.async {
+            NativeUI.showMenu(
+                view: view,
+                args: call.arguments as? [String: Any] ?? [:],
+                result: result
+            )
+        }
+
     default:
       result(FlutterMethodNotImplemented)
     }

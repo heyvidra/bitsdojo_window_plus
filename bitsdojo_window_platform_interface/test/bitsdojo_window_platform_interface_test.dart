@@ -1,5 +1,7 @@
 import 'package:bitsdojo_window_platform_interface/bitsdojo_window_platform_interface.dart';
+import 'package:bitsdojo_window_platform_interface/method_channel_bitsdojo_window.dart';
 import 'package:flutter/painting.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 
@@ -138,6 +140,74 @@ class FakePlatform extends BitsdojoWindowPlatform with MockPlatformInterfaceMixi
 }
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  group('native UI', () {
+    const channel = MethodChannel('bitsdojo/window');
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+
+    tearDown(() => messenger.setMockMethodCallHandler(channel, null));
+
+    test('menu items serialize with nested submenus and null-id separators', () {
+      const items = [
+        NativeMenuItem('copy', 'Copy'),
+        NativeMenuItem.separator(),
+        NativeMenuItem('view', 'View', enabled: false, submenu: [
+          NativeMenuItem('wrap', 'Wrap', checked: true),
+        ]),
+      ];
+
+      final maps = [for (final item in items) item.toMap()];
+      expect(maps[0], {
+        'id': 'copy',
+        'label': 'Copy',
+        'enabled': true,
+        'checked': false,
+      });
+      expect(maps[1]['id'], isNull);
+      expect(maps[2]['enabled'], isFalse);
+      expect((maps[2]['submenu'] as List).single, {
+        'id': 'wrap',
+        'label': 'Wrap',
+        'enabled': true,
+        'checked': true,
+      });
+    });
+
+    test('showNativeAlert passes the request through and returns the index',
+        () async {
+      MethodCall? seen;
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        seen = call;
+        return 1;
+      });
+
+      final index = await MethodChannelBitsdojoWindow().showNativeAlert(
+        title: 'Delete?',
+        message: 'This cannot be undone.',
+        buttons: ['Delete', 'Cancel'],
+        style: NativeAlertStyle.critical,
+      );
+
+      expect(index, 1);
+      expect(seen?.method, 'showNativeAlert');
+      expect(seen?.arguments['buttons'], ['Delete', 'Cancel']);
+      expect(seen?.arguments['style'], NativeAlertStyle.critical.index);
+    });
+
+    test('a missing plugin reads as a dismissal, not an exception', () async {
+      // No mock handler installed: the same shape a platform without native UI
+      // gives, so callers only ever branch on the value.
+      final platform = MethodChannelBitsdojoWindow();
+      expect(await platform.showNativeAlert(title: 'Hi'), -1);
+      expect(
+        await platform.showNativeMenu(const [NativeMenuItem('copy', 'Copy')]),
+        isNull,
+      );
+    });
+  });
+
   group('BitsdojoWindowPlatform', () {
     test('instance defaults to MethodChannelBitsdojoWindow', () {
       expect(BitsdojoWindowPlatform.instance, isNotNull);

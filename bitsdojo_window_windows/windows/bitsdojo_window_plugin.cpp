@@ -13,6 +13,7 @@
 
 #include "./bitsdojo_window_api.h"
 #include "./bitsdojo_window.h"
+#include "./native_ui.h"
 #include "include/bitsdojo_window_windows/multi_window_manager.h"
 
 // Helper function to get MultiWindowManager instance
@@ -254,8 +255,11 @@ void BitsdojoWindowPlugin::HandleMethodCall(
               ? std::get<double>(y_it->second)
               : 0;
 
-      // Use MultiWindowManager to create the window
-      extern class MultiWindowManager &GetMultiWindowManagerInstance();
+      // Use MultiWindowManager to create the window. The block-scope `extern`
+      // redeclaration this used to carry landed inside the anonymous namespace,
+      // so it named a NEW internal-linkage symbol that nothing defines — GCC
+      // rejects it as "declared static but never defined". The file-scope
+      // declaration at the top is the one that resolves.
       GetMultiWindowManagerInstance().OpenNewWindow(name, arguments, width,
                                                     height, x, y);
 
@@ -292,6 +296,20 @@ void BitsdojoWindowPlugin::HandleMethodCall(
       MultiWindowManager::GetInstance().CloseWindow(name_str);
     }
     result->Success();
+  } else if (method_call.method_name().compare("showNativeAlert") == 0) {
+    auto args = std::get_if<flutter::EncodableMap>(method_call.arguments());
+    int index = args ? bitsdojo_native_ui::ShowAlert(window, *args) : -1;
+    result->Success(flutter::EncodableValue(index));
+  } else if (method_call.method_name().compare("showNativeMenu") == 0) {
+    auto args = std::get_if<flutter::EncodableMap>(method_call.arguments());
+    std::string picked =
+        args ? bitsdojo_native_ui::ShowMenu(window, child_window, *args)
+             : std::string();
+    if (picked.empty()) {
+      result->Success();  // Dismissed: null, not an empty id.
+    } else {
+      result->Success(flutter::EncodableValue(picked));
+    }
   } else if (method_call.method_name().compare("terminateApp") == 0) {
     // Terminate the app by destroying the window.
     // This allows OnDestroy to run (cleaning up Flutter controller) while

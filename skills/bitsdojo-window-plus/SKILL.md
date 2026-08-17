@@ -135,6 +135,39 @@ In the child window the matching route from `routes:` receives `arguments`. `win
 - Multi-window: `name`, `arguments`, `isMainWindow`, `depth`, `openNewWindow(...)`, `getWindowForHandle(handle)`, `terminateApp()`.
 - Capabilities: `appWindow.capabilities.supportsBackgroundEffects` / `supportsTitleBarButtonVisibility` / `supportsTitleBarButtonOffset` — **check these before calling platform-gated APIs** to keep code cross-platform.
 
+## Native dialogs and menus
+
+Top-level functions (not on `appWindow` — they always act on the window of the *calling* engine, which is what makes them land on the right window in a multi-window app):
+
+```dart
+final index = await showNativeAlert(          // -1 = dismissed
+  title: 'Delete?', message: '...', buttons: ['Delete', 'Cancel'],
+  style: NativeAlertStyle.critical);          // info | warning | critical
+final ok = await showNativeConfirm(title: 'Quit?');   // two-button shorthand
+
+final picked = await showNativeMenu(          // null = dismissed
+  const [
+    NativeMenuItem('copy', 'Copy'),
+    NativeMenuItem('paste', 'Paste', enabled: false),
+    NativeMenuItem.separator(),
+    NativeMenuItem('view', 'View', submenu: [
+      NativeMenuItem('wrap', 'Wrap lines', checked: true),
+    ]),
+  ],
+  position: details.globalPosition,           // null = at the mouse pointer
+);
+```
+
+`buttons` is affirmative-first — `buttons[0]` is the default button, index 0 comes back. `position` is logical pixels from the window's top-left, so Flutter's `globalPosition` passes straight through. An item with a `submenu` opens it instead of being picked, so its own id never returns.
+
+Reach for these only when the dialog/menu must be a real OS one: macOS sheet, OS-modal, native styling, or free to extend past the window's edges. Otherwise `showDialog` and `MenuAnchor` are the better default.
+
+Platform notes to be honest about:
+
+- **Windows alerts** use `MessageBoxW`, which only has the fixed system button sets. The button *count* picks the set (1 → OK, 2 → OK+Cancel, 3+ → Yes+No+Cancel) and the custom labels are ignored. Custom labels would need `TaskDialogIndirect` plus a comctl32 v6 manifest entry that the Flutter runner doesn't ship.
+- Alerts are a **sheet** on macOS (non-blocking, parented) and a modal dialog on Windows/Linux. All three block the platform thread only for the duration of the popup menu, not the alert.
+- `checked: true` renders as a check-mark item; on Linux that's a `GtkCheckMenuItem`.
+
 ## Animated resize / move
 
 `DesktopWindowAnimation` extension adds:
@@ -174,6 +207,8 @@ If `BDW_CUSTOM_FRAME` is **not** set, the OS chrome is shown and these widgets a
 | `onClose` interceptor                |    Y    |   Y   |   Y   |
 | `setWindowTitleBarButtonVisibility`  |    —    |   Y   |   Y   |
 | `titleBarHeight`                     |    Y    |   Y   |   —   |
+| `showNativeAlert` / `showNativeConfirm` | Y (system button labels) | Y (sheet) | Y |
+| `showNativeMenu`                     |    Y    |   Y   |   Y   |
 
 Always guard the unsupported calls behind `Platform.isX` or `appWindow.capabilities.*` rather than letting them silently no-op.
 

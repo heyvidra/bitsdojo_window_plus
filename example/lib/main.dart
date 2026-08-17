@@ -136,6 +136,7 @@ class _MyHomePageState extends State<MyHomePage> {
   Size? _maxConstraint;
   int _singletonCounter = 0;
   int _inspectorCounter = 0;
+  String _lastNativeUIResult = 'nothing yet';
   final Map<DesktopWindowButton, bool> _buttonVisibility = {
     DesktopWindowButton.close: true,
     DesktopWindowButton.minimize: true,
@@ -610,8 +611,78 @@ class _MyHomePageState extends State<MyHomePage> {
           const SizedBox(height: 16),
           _buildDataCard('Current Effect', _currentEffect.name, Colors.teal),
         ]),
+        _buildSection('Native Dialogs & Menus', [
+          _buildPlatformNote(
+            'OS-level, owned by THIS window: a sheet on macOS, a window-modal '
+            'dialog on Windows/Linux. Open a child window and try it there.',
+          ),
+          const SizedBox(height: 8),
+          _buildButton(
+            icon: Icons.info_outline,
+            label: 'Native Alert',
+            onPressed: () async {
+              await showNativeAlert(
+                title: 'Native alert',
+                message: 'This one belongs to '
+                    '${appWindow.name ?? 'the main window'}.',
+              );
+              _reportNativeUI('alert dismissed');
+            },
+          ),
+          _buildButton(
+            icon: Icons.help_outline,
+            label: 'Native Confirm',
+            onPressed: () async {
+              final confirmed = await showNativeConfirm(
+                title: 'Delete this window?',
+                message: 'Nothing is actually deleted — this is a demo.',
+                confirmLabel: 'Delete',
+                style: NativeAlertStyle.critical,
+              );
+              _reportNativeUI('confirm: $confirmed');
+            },
+          ),
+          GestureDetector(
+            onSecondaryTapDown: (details) async {
+              final picked = await showNativeMenu(
+                const [
+                  NativeMenuItem('cut', 'Cut'),
+                  NativeMenuItem('copy', 'Copy'),
+                  NativeMenuItem('paste', 'Paste', enabled: false),
+                  NativeMenuItem.separator(),
+                  NativeMenuItem('view', 'View', submenu: [
+                    NativeMenuItem('wrap', 'Wrap lines', checked: true),
+                    NativeMenuItem('whitespace', 'Show whitespace'),
+                  ]),
+                ],
+                position: details.globalPosition,
+              );
+              _reportNativeUI('menu: ${picked ?? 'dismissed'}');
+            },
+            child: Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(vertical: 24),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: Colors.indigo.withValues(alpha: 0.35),
+                  style: BorderStyle.solid,
+                ),
+              ),
+              child: const Center(
+                child: Text('Right-click here for a native menu'),
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          _buildDataCard('Last Result', _lastNativeUIResult, Colors.indigo),
+        ]),
       ],
     );
+  }
+
+  void _reportNativeUI(String result) {
+    if (mounted) setState(() => _lastNativeUIResult = result);
   }
 
   Widget _buildSection(String title, List<Widget> children) {

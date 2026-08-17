@@ -130,6 +130,79 @@ DesktopWindow getWindowForHandle(int handle) {
   return _platform.getWindowForHandle(handle);
 }
 
+/// Shows an OS-native alert owned by THIS window — a sheet on macOS, a
+/// window-modal dialog on Windows and Linux — and completes with the index of
+/// the pressed button in [buttons], or -1 if it was dismissed without one.
+///
+/// Prefer Flutter's own `showDialog` for ordinary in-app confirmations; reach
+/// for this when the dialog has to be OS-modal, has to look native, or has to
+/// hang off the correct window in a multi-window app.
+///
+/// [buttons] is affirmative-first (`['Delete', 'Cancel']`). Windows shows the
+/// system button set for the given count — OK / OK+Cancel / Yes+No+Cancel —
+/// and ignores the labels.
+Future<int> showNativeAlert({
+  required String title,
+  String? message,
+  List<String> buttons = const ['OK'],
+  NativeAlertStyle style = NativeAlertStyle.info,
+}) =>
+    _platform.showNativeAlert(
+      title: title,
+      message: message,
+      buttons: buttons,
+      style: style,
+    );
+
+/// Two-button [showNativeAlert]: true when [confirmLabel] was pressed, false
+/// for [cancelLabel] or a dismissal.
+Future<bool> showNativeConfirm({
+  required String title,
+  String? message,
+  String confirmLabel = 'OK',
+  String cancelLabel = 'Cancel',
+  NativeAlertStyle style = NativeAlertStyle.warning,
+}) async =>
+    await showNativeAlert(
+      title: title,
+      message: message,
+      buttons: [confirmLabel, cancelLabel],
+      style: style,
+    ) ==
+    0;
+
+/// Pops up an OS-native menu over THIS window, completing when it closes with
+/// the [NativeMenuItem.id] of the picked entry — or null if it was dismissed.
+///
+/// [position] is in logical pixels from the window's top-left, so a
+/// `GestureDetector`'s `details.globalPosition` goes straight through. Null
+/// pops the menu at the mouse pointer.
+///
+/// ```dart
+/// onSecondaryTapDown: (details) async {
+///   final picked = await showNativeMenu(
+///     const [
+///       NativeMenuItem('copy', 'Copy'),
+///       NativeMenuItem('paste', 'Paste', enabled: false),
+///       NativeMenuItem.separator(),
+///       NativeMenuItem('more', 'More', submenu: [
+///         NativeMenuItem('wrap', 'Wrap lines', checked: true),
+///       ]),
+///     ],
+///     position: details.globalPosition,
+///   );
+/// }
+/// ```
+///
+/// Flutter's own `MenuAnchor` is the better default — it's themable and stays
+/// in the widget tree. Use this when the menu must be a real OS menu: system
+/// styling and animation, and free to extend past the window's edges.
+Future<String?> showNativeMenu(
+  List<NativeMenuItem> items, {
+  Offset? position,
+}) =>
+    _platform.showNativeMenu(items, position: position);
+
 void terminateApp() {
   _platform.terminateApp();
 }

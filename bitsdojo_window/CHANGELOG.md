@@ -1,5 +1,6 @@
 ## 0.5.0
-    - Version alignment with the 0.5.0 removal of deprecated no-op native entry points, and the macOS fullscreen fix for custom-frame windows that never set a background effect. No Dart API change.
+    - System-level dialogs and menus, owned by the calling window: `showNativeAlert(title:, message:, buttons:, style:)` returns the index of the pressed button (-1 when dismissed), `showNativeConfirm(...)` is the two-button shorthand returning a bool, and `showNativeMenu(items, position:)` pops an OS menu and returns the picked `NativeMenuItem` id (null when dismissed). A sheet on macOS, a window-modal dialog on Windows and Linux. These are top-level functions rather than `appWindow` methods because each engine's plugin instance already knows which window it belongs to — which is what makes them land on the right window in a multi-window app, where the generic packages can only target the key window. Prefer Flutter's own `showDialog` / `MenuAnchor` unless the dialog has to be OS-modal, look native, or escape the window bounds.
+    - Version alignment with the 0.5.0 removal of deprecated no-op native entry points, and the macOS fullscreen fix for custom-frame windows that never set a background effect.
 
 ## 0.4.3
     - Version alignment with the 0.4.3 macOS launch-crash fix; no functional change in this package.

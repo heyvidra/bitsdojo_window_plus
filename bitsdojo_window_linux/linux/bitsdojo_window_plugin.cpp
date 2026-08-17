@@ -13,6 +13,7 @@
 // limitations under the License.
 #include "include/bitsdojo_window_linux/bitsdojo_window_plugin.h"
 
+#include "./native_ui.h"
 #include "./window_impl.h"
 #include "include/bitsdojo_window_linux/multi_window_manager.h"
 #include <cmath>
@@ -158,6 +159,24 @@ static void method_call_cb(FlMethodChannel *channel, FlMethodCall *method_call,
         response = FL_METHOD_RESPONSE(fl_method_success_response_new(nullptr));
       }
     }
+  } else if (strcmp(method, "showNativeAlert") == 0) {
+    // get_window(self) is THIS engine's window, so the dialog stays with the
+    // window that asked for it.
+    int index = fl_value_get_type(args) == FL_VALUE_TYPE_MAP
+                    ? bdw_show_alert(get_window(self), args)
+                    : -1;
+    g_autoptr(FlValue) value = fl_value_new_int(index);
+    response = FL_METHOD_RESPONSE(fl_method_success_response_new(value));
+  } else if (strcmp(method, "showNativeMenu") == 0) {
+    FlView *view = fl_plugin_registrar_get_view(self->registrar);
+    g_autofree char *picked =
+        fl_value_get_type(args) == FL_VALUE_TYPE_MAP
+            ? bdw_show_menu(view != nullptr ? GTK_WIDGET(view) : nullptr, args)
+            : nullptr;
+    // Dismissed: null, not an empty id.
+    g_autoptr(FlValue) value =
+        picked != nullptr ? fl_value_new_string(picked) : fl_value_new_null();
+    response = FL_METHOD_RESPONSE(fl_method_success_response_new(value));
   } else if (strcmp(method, "setBackgroundEffect") == 0) {
     if (fl_value_get_type(args) == FL_VALUE_TYPE_INT) {
       auto bdw = bitsdojo_window_from(get_window(self));
