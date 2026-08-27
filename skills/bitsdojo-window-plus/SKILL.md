@@ -7,7 +7,7 @@ description: Use when integrating, customizing, or debugging the bitsdojo_window
 
 This repository **is** the library `bitsdojo_window_plus` — a federated Flutter plugin for customizing desktop windows on Windows, macOS, and Linux. Use this skill any time the user is consuming the library from another Flutter app, modifying its public Dart API, or touching the native runner glue that the library depends on.
 
-Key value over upstream `bitsdojo_window`: built-in **multi-window** support, `backgroundEffect`, `alwaysOnTop`, `onClose` interceptor, per-button title-bar visibility, custom `titleBarHeight`, and a high-level `runBitsdojoWindowApp` + `RoutedWindowHost` setup that replaces the old manual `doWhenWindowReady` boilerplate.
+Key value over upstream `bitsdojo_window`: built-in **multi-window** support with `WindowRef` addressing, **dialog windows** (modal/modeless, `await appWindow.openDialog(...)` resolves with the dialog's result), `backgroundEffect`, `alwaysOnTop`, `onClose` interceptor, per-button title-bar visibility, custom `titleBarHeight`, and a high-level `runBitsdojoWindowApp` + `RoutedWindowHost` setup that replaces the old manual `doWhenWindowReady` boilerplate.
 
 ## Package layout
 
@@ -110,17 +110,43 @@ runBitsdojoWindowApp(
 
 Matching order: `mainWindow` flag, then `name`, then optional `matches` predicate. The first matching config wins, so put the most specific configs first. Each `WindowConfiguration` field also has a `*Builder` async variant (e.g., `sizeBuilder`) for values that need to be computed per-window at ready time.
 
+## The shape of the API (0.7.0)
+
+Every call has exactly one home, decided by what it acts on: **this window** → a member of `appWindow`; **the process/machine** → a member of `desktopApp` (`closeWindow(name)`, `hasWindow(name)`, `windowClosed` stream, `displays()`, `terminate()`, `windowForHandle(handle)`). No other top-level functions exist; the bootstrap family (`runBitsdojoWindowApp`, `doWhenWindowReady`, ...) is the one exemption. The pre-0.7.0 top-level functions (`closeWindow`, `getDisplays`, `showNativeAlert`, ...) still work as `@Deprecated` forwarders.
+
 ## Multi-window — spawning children
 
 ```dart
-await appWindow.openNewWindow(
+final editor = await appWindow.openNewWindow(   // Future<WindowRef>
   name: 'editor',
   size: const Size(720, 480),
   arguments: {'docId': 42},
 );
+await editor.update({'docId': 43});  // named-reuse: deliver args + focus
+await editor.close();
+desktopApp.windowClosed.listen((name) => ...);  // broadcast Stream<String>
 ```
 
-In the child window the matching route from `routes:` receives `arguments`. `window.name` and `window.arguments` are also readable inside the child for branching. `window.isMainWindow` distinguishes the primary.
+Unnamed windows get an auto-generated name so the `WindowRef` always works. In the child window the matching route from `routes:` receives `arguments`. `window.name` and `window.arguments` are also readable inside the child for branching. `window.isMainWindow` distinguishes the primary.
+
+### Dialogs — `openDialog` awaits the result
+
+```dart
+final result = await appWindow.openDialog(   // Future<Map<String, dynamic>?>
+  size: const Size(430, 300),
+  arguments: {'kind': 'confirm-delete'},
+  // modal: true is the default; modal: false = modeless
+);
+// Inside the dialog window:
+appWindow.closeWithResult({'confirmed': true});
+```
+
+The receiver is the parent — you call `openDialog` on the window that owns the dialog. While `modal`, that window takes no input until the dialog closes (window-modal, never app-modal). The future completes when the dialog closes: with the `closeWithResult` map, or null for a plain close/dismissal. `openDialog` with a still-open name focuses the existing dialog and returns the same pending future.
+
+Honest platform notes:
+
+- **macOS**: the dialog also *follows* the parent when the parent moves — that is how AppKit child windows behave. Clicking the blocked parent beeps and re-fronts the dialog.
+- **Linux**: each window is a separate process, so this is a degraded cross-process implementation: input blocking and the result channel always work (the result travels through a temp file the parent reads on child exit); above-parent stacking is honored on X11 via `WM_TRANSIENT_FOR` but not enforceable on Wayland. `desktopApp.windowClosed` only reports windows this window spawned.
 
 ## `appWindow` — the global handle
 
@@ -132,7 +158,8 @@ In the child window the matching route from `routes:` receives `arguments`. `win
 - Effects / behavior: `backgroundEffect = WindowEffect.acrylic|mica|tabbed|transparent|disabled`, `alwaysOnTop`, `hasShadow`.
 - Drag: `startDragging()` — call from `onPanStart`/`MoveWindow` widget for custom title bars.
 - Lifecycle: `onClose`, `onArgumentsChanged` (prefer wiring these via `RoutedWindowHost` / `WindowConfiguration`).
-- Multi-window: `name`, `arguments`, `isMainWindow`, `depth`, `openNewWindow(...)`, `getWindowForHandle(handle)`, `terminateApp()`.
+- Multi-window: `name`, `arguments`, `isMainWindow`, `depth`, `openNewWindow(...)` → `WindowRef`, `openDialog(...)` → result, `closeWithResult(map)`.
+- Native UI (owned by THIS window): `showNativeAlert(...)`, `showNativeConfirm(...)`, `showNativeMenu(items, position:)`.
 - Capabilities: `appWindow.capabilities.supportsBackgroundEffects` / `supportsTitleBarButtonVisibility` / `supportsTitleBarButtonOffset` — **check these before calling platform-gated APIs** to keep code cross-platform.
 
 ## Window events
@@ -153,14 +180,14 @@ _sub = appWindow.events.listen((event) {
 
 - Geometry is in logical pixels, in the same space `appWindow.position` / `size` read back — every platform fills the payload from the same native getter those properties use, so an event never disagrees with a property read after it.
 - Cancel your subscription as usual; the stream itself is never closed (a window object lives as long as its engine), so there is nothing to dispose.
-- **Closing is not an event.** Use `onClose` (or `WindowConfiguration.onCloseRequested`) to *veto* a close, and top-level `onWindowClosed` to hear about other windows closing. A stream event can do neither.
+- **Closing is not an event.** Use `onClose` (or `WindowConfiguration.onCloseRequested`) to *veto* a close, and `desktopApp.windowClosed` to hear about other windows closing. A stream event can do neither. (`onClose` staying a single slot is a design: two vetoers cannot both decide one close. Events are streams; interceptors are slots.)
 - Expect bursts while a window is being dragged or live-resized — debounce if you're persisting geometry.
 - No fullscreen event: macOS and Linux report it natively but Windows does not distinguish it cleanly, and one platform silently missing an event is worse than the event not existing. `appWindow.toggleFullScreen()` is still there, and a fullscreen transition does emit moved/resized.
 
 ## Displays
 
 ```dart
-final displays = await getDisplays();
+final displays = await desktopApp.displays();
 final second = displays.firstWhere((d) => !d.isPrimary);
 appWindow.position = second.workArea.topLeft;   // same coordinate space
 ```
@@ -169,15 +196,15 @@ appWindow.position = second.workArea.topLeft;   // same coordinate space
 
 ## Native dialogs and menus
 
-Top-level functions (not on `appWindow` — they always act on the window of the *calling* engine, which is what makes them land on the right window in a multi-window app):
+`appWindow` methods — they act on the window of the *calling* engine (no window handle crosses the channel; each engine's plugin knows its own window), which is what makes them land on the right window in a multi-window app:
 
 ```dart
-final index = await showNativeAlert(          // -1 = dismissed
+final index = await appWindow.showNativeAlert(   // -1 = dismissed
   title: 'Delete?', message: '...', buttons: ['Delete', 'Cancel'],
   style: NativeAlertStyle.critical);          // info | warning | critical
-final ok = await showNativeConfirm(title: 'Quit?');   // two-button shorthand
+final ok = await appWindow.showNativeConfirm(title: 'Quit?');   // two-button shorthand
 
-final picked = await showNativeMenu(          // null = dismissed
+final picked = await appWindow.showNativeMenu(   // null = dismissed
   const [
     NativeMenuItem('copy', 'Copy'),
     NativeMenuItem('paste', 'Paste', enabled: false),
@@ -233,7 +260,8 @@ If `BDW_CUSTOM_FRAME` is **not** set, the OS chrome is shown and these widgets a
 
 | Feature                              | Windows | macOS | Linux |
 | ------------------------------------ | :-----: | :---: | :---: |
-| Multi-window (`openNewWindow`)       |    Y    |   Y   |   Y   |
+| Multi-window (`openNewWindow` → `WindowRef`) |    Y    |   Y   |   Y   |
+| Dialogs (`openDialog` / `closeWithResult`) |    Y    |   Y   | partial (input-block + result always; stacking X11 only) |
 | `backgroundEffect`                   |    Y    |   Y   |   —   |
 | `alwaysOnTop`                        |    Y    |   Y   |   Y   |
 | `onClose` interceptor                |    Y    |   Y   |   Y   |
@@ -242,7 +270,7 @@ If `BDW_CUSTOM_FRAME` is **not** set, the OS chrome is shown and these widgets a
 | `showNativeAlert` / `showNativeConfirm` | Y (system button labels) | Y (sheet) | Y |
 | `showNativeMenu` / `ContextMenuRegion` |    Y    |   Y   |   Y   |
 | `appWindow.events`                   |    Y    |   Y   |   Y   |
-| `getDisplays()`                      |    Y    |   Y   |   Y   |
+| `desktopApp.displays()`              |    Y    |   Y   |   Y   |
 
 Always guard the unsupported calls behind `Platform.isX` or `appWindow.capabilities.*` rather than letting them silently no-op.
 

@@ -20,10 +20,34 @@ Watch the tutorial to get started. Click the image below to watch the video:
     - Set window alignment on screen (any Alignment, not just the named corners)
     - Set window title
     - Multi-window: open, address and close named windows
+    - Dialog windows: modal or modeless, owned by the opening window, with
+      `await appWindow.openDialog(...)` resolving to the dialog's result
     - OS-native alert / confirm dialogs and right-click menus, parented to the
       window that asked for them
     - Observe focus, movement, resize, minimize and maximize as a stream
     - Enumerate the attached monitors to place windows on a chosen display
+
+# Upgrading to 0.7.0
+
+Every call now has exactly one home — `appWindow` for this window,
+`desktopApp` for the process/machine (see [The shape of the
+API](#the-shape-of-the-api)). Every pre-0.7.0 top-level function still
+compiles as a one-line `@Deprecated` forwarder (removal planned for 0.8.0):
+
+| Before | 0.7.0 |
+| --- | --- |
+| `showNativeAlert(...)` / `showNativeConfirm(...)` / `showNativeMenu(...)` | `appWindow.showNativeAlert(...)` / `...Confirm` / `...Menu` |
+| `closeWindow(name)` / `hasWindow(name)` | `desktopApp.closeWindow(name)` / `desktopApp.hasWindow(name)` |
+| `getDisplays()` | `desktopApp.displays()` |
+| `terminateApp()` | `desktopApp.terminate()` |
+| `getWindowForHandle(h)` | `desktopApp.windowForHandle(h)` |
+| `onWindowClosed = cb` (single slot) | `desktopApp.windowClosed.listen(cb)` (broadcast stream) |
+| `appWindow.openNewWindow(...)` → `Future<void>` | same call → `Future<WindowRef>` (unnamed windows get an auto-generated name) |
+| — | `appWindow.openDialog(...)` → the dialog's result; `appWindow.closeWithResult(map)` inside it |
+
+One removal: the long-deprecated `appWindow.visible` getter/setter is gone —
+use `isVisible` / `show()` / `hide()`. No native runner changes are required
+to upgrade: all three platforms' runner glue is unchanged since 0.5.x.
 
 # Getting Started
 
@@ -235,24 +259,66 @@ await appWindow.animateTo(
 );
 ```
 
+# The shape of the API
+
+Every call has exactly one home, decided by what it acts on:
+
+- **This window** → a member of `appWindow`: `appWindow.close()`,
+  `appWindow.openDialog(...)`, `appWindow.showNativeAlert(...)`.
+- **The process or the machine** → a member of `desktopApp`:
+  `desktopApp.closeWindow(name)`, `desktopApp.displays()`,
+  `desktopApp.terminate()`.
+
+There are no other top-level functions — only the bootstrap family
+(`runBitsdojoWindowApp`, `doWhenWindowReady`, ...), which runs before the
+objects mean anything. The pre-0.7.0 top-level functions still work as
+deprecated forwarders.
+
 # Multi-window
 
 ```dart
-await appWindow.openNewWindow(
+final editor = await appWindow.openNewWindow(   // Future<WindowRef>
   name: 'editor',                    // selects the route registered above
   size: const Size(720, 480),
   arguments: {'docId': 42},
 );
+await editor.update({'docId': 43});  // named-reuse: deliver args + focus
+await editor.close();
 
-if (await hasWindow('editor')) await closeWindow('editor');
-
-onWindowClosed = (name) => debugPrint('$name went away');
+desktopApp.windowClosed.listen((name) => debugPrint('$name went away'));
 ```
 
-Inside a child window, `appWindow.name`, `appWindow.arguments` and
-`appWindow.isMainWindow` identify it. Calling `openNewWindow` with a name that
-is already open delivers the new `arguments` to the existing window and focuses
-it, rather than opening a second one.
+An unnamed window gets an auto-generated name, so the returned `WindowRef`
+always works. Inside a child window, `appWindow.name`, `appWindow.arguments`
+and `appWindow.isMainWindow` identify it. Opening a name that is already open
+delivers the new `arguments` to the existing window and focuses it, rather
+than opening a second one.
+
+## Dialogs — `openDialog` awaits the result
+
+```dart
+final result = await appWindow.openDialog(   // Future<Map<String, dynamic>?>
+  size: const Size(430, 300),
+  arguments: {'kind': 'confirm-delete'},
+  // modal: true is the default; pass modal: false for a modeless dialog
+);
+
+// Inside the dialog window:
+appWindow.closeWithResult({'confirmed': true});
+```
+
+The receiver is the parent: the dialog stays above the window you called
+`openDialog` on, and while `modal` that window takes no input until the dialog
+closes (window-modal, never app-modal). The future completes when the dialog
+closes — with the map it passed to `closeWithResult`, or null when it was
+closed without one (its close button, `WindowRef.close`).
+
+Platform notes: on macOS the dialog also follows the parent when it moves
+(AppKit child windows do), and clicking the blocked parent beeps and re-fronts
+the dialog. On Linux, where each window is a separate process, the input block
+and the result channel always work but above-parent stacking only holds on X11
+(`WM_TRANSIENT_FOR`), not on Wayland. Opening an already-open *named* dialog
+focuses it and returns the same pending future.
 
 # Native dialogs and menus
 
@@ -262,17 +328,17 @@ styled, a sheet on macOS, or a menu that can extend past the window's edges.
 
 ```dart
 // Index of the pressed button, or -1 if dismissed. buttons[0] is the default.
-final index = await showNativeAlert(
+final index = await appWindow.showNativeAlert(
   title: 'Delete this file?',
   message: 'This cannot be undone.',
   buttons: ['Delete', 'Cancel'],
   style: NativeAlertStyle.critical, // info | warning | critical
 );
 
-final ok = await showNativeConfirm(title: 'Quit without saving?');
+final ok = await appWindow.showNativeConfirm(title: 'Quit without saving?');
 
 // The picked item's id, or null if dismissed.
-final id = await showNativeMenu(
+final id = await appWindow.showNativeMenu(
   const [
     NativeMenuItem('copy', 'Copy'),
     NativeMenuItem('paste', 'Paste', enabled: false),
@@ -309,7 +375,7 @@ appWindow.events.listen((event) {
   }
 });
 
-for (final display in await getDisplays()) {
+for (final display in await desktopApp.displays()) {
   print('${display.name} ${display.bounds} work=${display.workArea}');
 }
 ```

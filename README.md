@@ -14,7 +14,9 @@ A [Flutter package](https://pub.dev/packages/bitsdojo_window) that makes it easy
 **bitsdojo_window_plus** is an enhanced version of the original package, designed for better multi-window management, more robust platform integration, and improved stability for complex desktop applications.
 
 
-- Multi-window support
+- Multi-window support, with a `WindowRef` back for every window you open
+- Dialog windows — modal or modeless, owned by the opening window, and
+  `await appWindow.openDialog(...)` resolves with the dialog's result
 - backgroundEffect
 - alwaysOnTop
 - onClose handler
@@ -22,7 +24,8 @@ A [Flutter package](https://pub.dev/packages/bitsdojo_window) that makes it easy
 - titlebar height
 - Native alerts and context menus, owned by the calling window
 - `appWindow.events` — a stream of what the OS did to the window
-- `getDisplays()` — every monitor, in the same coordinate space as `position`
+- `desktopApp.windowClosed` — a stream of windows closing, by name
+- `desktopApp.displays()` — every monitor, in the same coordinate space as `position`
 - and so on...
 
 Platform notes:
@@ -35,8 +38,11 @@ Platform notes:
 - `showNativeAlert` / `showNativeMenu`: Windows, macOS, Linux
   (Windows draws the system button set for the button *count* and ignores
   custom labels — see [Native dialogs and menus](#native-dialogs-and-menus))
+- `openDialog` (modal/modeless + result): Windows, macOS; Linux degraded —
+  input block and the result channel always work, above-parent stacking is
+  X11-only
 - `appWindow.events`: Windows, macOS, Linux
-- `getDisplays()`: Windows, macOS, Linux
+- `desktopApp.displays()`: Windows, macOS, Linux
 
 
 <img src="resources/multi-window.png">
@@ -62,6 +68,42 @@ Watch the tutorial to get started. Click the image below to watch the video:
   window that asked for them
 - Observe window focus, movement, resize, minimize and maximize as a stream
 - Enumerate the attached monitors to place windows on a chosen display
+
+# The shape of the API (0.7.0)
+
+Every call has exactly one home, decided by what it acts on:
+
+- **This window** → a member of `appWindow`: `appWindow.close()`,
+  `appWindow.openDialog(...)`, `appWindow.showNativeAlert(...)`.
+- **The process or the machine** → a member of `desktopApp`:
+  `desktopApp.closeWindow(name)`, `desktopApp.displays()`,
+  `desktopApp.terminate()`.
+
+There are no other top-level functions — only the bootstrap family
+(`runBitsdojoWindowApp`, `doWhenWindowReady`, ...), which runs before the
+objects mean anything.
+
+# Upgrading to 0.7.0
+
+Every pre-0.7.0 top-level function still compiles as a one-line `@Deprecated`
+forwarder (removal planned for 0.8.0), so upgrading is mechanical:
+
+| Before | 0.7.0 |
+| --- | --- |
+| `showNativeAlert(...)` / `showNativeConfirm(...)` / `showNativeMenu(...)` | `appWindow.showNativeAlert(...)` / `...Confirm` / `...Menu` |
+| `closeWindow(name)` / `hasWindow(name)` | `desktopApp.closeWindow(name)` / `desktopApp.hasWindow(name)` |
+| `getDisplays()` | `desktopApp.displays()` |
+| `terminateApp()` | `desktopApp.terminate()` |
+| `getWindowForHandle(h)` | `desktopApp.windowForHandle(h)` |
+| `onWindowClosed = cb` (single slot) | `desktopApp.windowClosed.listen(cb)` (broadcast stream) |
+| `appWindow.openNewWindow(...)` → `Future<void>` | same call → `Future<WindowRef>` (unnamed windows get an auto-generated name) |
+| — | `appWindow.openDialog(...)` → the dialog's result; `appWindow.closeWithResult(map)` inside it |
+
+One removal: the long-deprecated `appWindow.visible` getter/setter is gone —
+use `isVisible` / `show()` / `hide()`.
+
+No native runner changes are required to upgrade: all three platforms' runner
+glue is unchanged since 0.5.x.
 
 # Upgrading to 0.5.0
 
@@ -106,7 +148,7 @@ dependencies:
     git:
       url: https://github.com/heyvidra/bitsdojo_window_plus.git
       path: bitsdojo_window
-      ref: v0.4.3
+      ref: v0.7.0
 ```
 
 Flutter-side setup can be kept fairly small. This mirrors the shipped
@@ -450,22 +492,26 @@ The native glue above exists to enable this. From Dart:
 ```dart
 // Open a child window. `name` selects the route registered in
 // runBitsdojoWindowApp(routes: ...), and `arguments` is delivered to it.
-await appWindow.openNewWindow(
+// The returned WindowRef addresses the window afterwards — unnamed windows
+// get an auto-generated name, so the ref always works.
+final editor = await appWindow.openNewWindow(
   name: 'editor',
   size: const Size(720, 480),
   position: const Offset(120, 80),
   arguments: {'docId': 42},
 );
+await editor.update({'docId': 43});   // named-reuse: deliver args + focus
+if (await editor.exists()) await editor.close();
 
-// Address a window by name from anywhere in the process.
-if (await hasWindow('editor')) {
-  await closeWindow('editor');
+// Or address any window by name from anywhere in the process.
+if (await desktopApp.hasWindow('editor')) {
+  await desktopApp.closeWindow('editor');
 }
 
-// Called in THIS engine whenever a named window elsewhere closes — however it
-// closed. The closing window's own engine is gone by then, so it never hears
-// about itself.
-onWindowClosed = (name) => debugPrint('$name went away');
+// Fired in THIS engine whenever a window elsewhere closes — however it
+// closed. Broadcast: listen from as many places as needed. The closing
+// window's own engine is gone by then, so it never hears about itself.
+desktopApp.windowClosed.listen((name) => debugPrint('$name went away'));
 ```
 
 Inside a child window, `appWindow.name`, `appWindow.arguments` and
@@ -474,6 +520,31 @@ down the spawn chain it sits. Calling `openNewWindow` again with a name that is
 already open delivers the new `arguments` to the existing window instead of
 opening a second one — that is what drives `onArgumentsChanged` and
 `RoutedWindowHost`'s rebuild.
+
+## Dialogs — `openDialog` awaits the result
+
+```dart
+final result = await appWindow.openDialog(   // Future<Map<String, dynamic>?>
+  size: const Size(430, 300),
+  arguments: {'kind': 'confirm-delete'},
+  // modal: true is the default; pass modal: false for a modeless dialog
+);
+
+// Inside the dialog window:
+appWindow.closeWithResult({'confirmed': true});
+```
+
+The receiver is the parent: the dialog stays above the window you called
+`openDialog` on, and while `modal` that window takes no input until the dialog
+closes (window-modal, never app-modal). The future completes when the dialog
+closes — with the map it passed to `closeWithResult`, or null when it was
+closed without one (its close button, `WindowRef.close`).
+
+Platform notes: on macOS the dialog also follows the parent when it moves
+(AppKit child windows do), and clicking the blocked parent beeps and re-fronts
+the dialog. On Linux, where each window is a separate process, the input block
+and the result channel always work but above-parent stacking only holds on X11
+(`WM_TRANSIENT_FOR`), not on Wayland.
 
 # Native dialogs and menus
 
@@ -484,7 +555,7 @@ extend past the window's edges.
 
 ```dart
 // Returns the index of the pressed button, or -1 if dismissed.
-final index = await showNativeAlert(
+final index = await appWindow.showNativeAlert(
   title: 'Delete this file?',
   message: 'This cannot be undone.',
   buttons: ['Delete', 'Cancel'],   // buttons[0] is the default button
@@ -492,10 +563,10 @@ final index = await showNativeAlert(
 );
 
 // Two-button shorthand: true when the confirm button was pressed.
-final ok = await showNativeConfirm(title: 'Quit without saving?');
+final ok = await appWindow.showNativeConfirm(title: 'Quit without saving?');
 
 // Returns the picked item's id, or null if dismissed.
-final id = await showNativeMenu(
+final id = await appWindow.showNativeMenu(
   const [
     NativeMenuItem('copy', 'Copy'),
     NativeMenuItem('paste', 'Paste', enabled: false),
@@ -525,10 +596,11 @@ ContextMenuRegion(
 )
 ```
 
-These are top-level functions rather than `appWindow` methods, and that is
-deliberate: no window handle crosses the channel, because each engine's plugin
-instance already knows which window it belongs to. That is what makes the sheet
-hang off the window that asked for it in a multi-window app.
+These are `appWindow` methods because they act on THIS window — the same
+receiver rule as everything else. No window handle crosses the channel: each
+engine's plugin instance already knows which window it belongs to, which is
+what makes the sheet hang off the window that asked for it in a multi-window
+app.
 
 Platform caveat worth knowing before you design a dialog: **on Windows the
 labels in `buttons` are ignored**. `MessageBoxW` only offers the fixed system
@@ -567,13 +639,13 @@ which can also veto the close.
 # Displays
 
 ```dart
-for (final display in await getDisplays()) {
+for (final display in await desktopApp.displays()) {
   print('${display.name}: ${display.bounds} work=${display.workArea} '
       '@${display.scaleFactor}x primary=${display.isPrimary}');
 }
 
 // Place a window on a chosen monitor.
-final target = (await getDisplays()).firstWhere((d) => !d.isPrimary);
+final target = (await desktopApp.displays()).firstWhere((d) => !d.isPrimary);
 appWindow.position = target.workArea.topLeft;
 ```
 
