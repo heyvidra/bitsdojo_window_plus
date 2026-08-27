@@ -21,6 +21,29 @@ public class MultiWindowManager {
     private var namedWindows: [String: BitsdojoWindow] = [:]
     private weak var primaryWindow: NSWindow?
     private var closingWindowHandles: Set<Int> = []
+
+    /// One entry per owned window created via openNewWindow's modality.
+    /// Modal entries carry a blocker view and a key observer; modeless
+    /// entries carry nil for both. Because every modal session owns its
+    /// OWN blocker/observer, tearing one down never strips a sibling
+    /// dialog's — the parent only becomes interactive again when its
+    /// last modal session is gone.
+    private struct OwnershipSession {
+        let dialog: NSWindow
+        let parent: NSWindow
+        let blocker: NSView?
+        let keyObserver: NSObjectProtocol?
+    }
+    private var ownershipSessions: [OwnershipSession] = []
+
+    /// JSON result strings set by a dialog's `setWindowResult`, delivered in
+    /// the windowClosed broadcast when the window actually closes. Keyed by
+    /// object identity, not windowNumber: the tracking arrays retain the
+    /// NSWindow through willClose, while windowNumber can go non-positive
+    /// once the window loses its device during teardown. Every entry is
+    /// removed in handleWindowClose (willClose fires for every real close),
+    /// so identifier reuse by a future allocation cannot resurrect a value.
+    private var pendingWindowResults: [ObjectIdentifier: String] = [:]
     
     // MARK: - Configuration
     
@@ -110,7 +133,9 @@ public class MultiWindowManager {
         arguments: [String: Any]?,
         argumentsJson: String? = nil,
         size: NSSize?,
-        position: NSPoint?
+        position: NSPoint?,
+        modality: String? = nil,
+        parent: NSWindow? = nil
     ) -> BitsdojoWindow {
         // Adopt the app's window subclass before creating anything. The
         // 0.5s-delayed auto-detect in BitsdojoWindowPlugin.register may not
@@ -121,7 +146,9 @@ public class MultiWindowManager {
             autoDetectPrimaryWindow()
         }
 
-        // Check if window with this name already exists
+        // Check if window with this name already exists.
+        // Modality is intentionally ignored on this path: reuse only
+        // focuses a window whose ownership was fixed at creation time.
         if let name = name, let existingWindow = namedWindows[name] {
             if canReuseWindow(existingWindow) {
                 existingWindow.windowArguments = arguments
@@ -167,9 +194,13 @@ public class MultiWindowManager {
         let newWindow = windowClass.init(contentRect: rect, styleMask: styleMask, backing: .buffered, defer: true)
         newWindow.isReleasedWhenClosed = false
         
-        // Set position if provided (translate from Dart top-left to macOS bottom-left)
-        let parent = (NSApp.keyWindow as? BitsdojoWindow) ?? (primaryWindow as? BitsdojoWindow)
+        // Ownership and depth must agree, so both derive from the same
+        // resolved window: the calling engine's window when the plugin
+        // passed one, else the key-window heuristic for native call sites
+        // that predate the parameter.
+        let effectiveParent: NSWindow? = parent ?? (NSApp.keyWindow as? BitsdojoWindow) ?? primaryWindow
 
+        // Set position if provided (translate from Dart top-left to macOS bottom-left)
         if let position = position {
             let translatedPosition = translateDartPosition(position)
             let probe = NSRect(x: translatedPosition.x,
@@ -192,8 +223,8 @@ public class MultiWindowManager {
         newWindow.windowArgumentsJson = argumentsJson
         
         // Set depth based on parent
-        if let parent = parent {
-            newWindow.depth = parent.depth + 1
+        if let owner = effectiveParent as? BitsdojoWindow {
+            newWindow.depth = owner.depth + 1
         }
         
         // Register with bitsdojo_window
@@ -240,6 +271,51 @@ public class MultiWindowManager {
         newWindow.disableScreenUpdatesUntilFlush()
         newWindow.makeKeyAndOrderFront(nil as Any?)
 
+        if let owner = effectiveParent, owner !== newWindow,
+           modality == "modeless" || modality == "modal" {
+            // AppKit child windows also move with their parent — an
+            // accepted platform difference from Win32 owned windows.
+            owner.addChildWindow(newWindow, ordered: .above)
+
+            var blocker: NSView? = nil
+            var keyObserver: NSObjectProtocol? = nil
+            if modality == "modal", let ownerContent = owner.contentView {
+                // Covers the content view only: a native-frame parent's
+                // miniaturize/zoom buttons stay live during the modal.
+                // Accepted — bitsdojo custom-frame apps draw their real
+                // controls in Flutter content, which IS covered.
+                let blockerView = ModalInputBlockerView(frame: ownerContent.bounds)
+                blockerView.autoresizingMask = [.width, .height]
+                blockerView.dialog = newWindow
+                ownerContent.addSubview(blockerView, positioned: .above, relativeTo: nil)
+                blocker = blockerView
+
+                // The blocker only intercepts the mouse; keyboard focus
+                // can still reach the parent without a click (Cmd-`,
+                // Mission Control), so bounce key status to the dialog.
+                keyObserver = NotificationCenter.default.addObserver(
+                    forName: NSWindow.didBecomeKeyNotification,
+                    object: owner,
+                    queue: .main
+                ) { [weak newWindow] _ in
+                    guard let dialog = newWindow else { return }
+                    // makeKeyAndOrderFront does not deminiaturize — a
+                    // dialog the user minimized would beep from the Dock
+                    // forever (the named-reuse path knows the same trick).
+                    if dialog.isMiniaturized {
+                        dialog.deminiaturize(nil)
+                    }
+                    dialog.makeKeyAndOrderFront(nil)
+                }
+            }
+            ownershipSessions.append(OwnershipSession(
+                dialog: newWindow,
+                parent: owner,
+                blocker: blocker,
+                keyObserver: keyObserver
+            ))
+        }
+
         return newWindow
     }
     
@@ -254,6 +330,19 @@ public class MultiWindowManager {
     public func getWindow(named name: String) -> BitsdojoWindow? {
         return namedWindows[name]
     }
+
+    /// Stores the result a dialog wants delivered with its windowClosed
+    /// broadcast. Last write wins: a Dart onClose veto can cancel the close
+    /// that followed closeWithResult, and a later closeWithResult must
+    /// replace the abandoned value, not sit behind it.
+    public func setWindowResult(window: NSWindow, json: String?) {
+        let key = ObjectIdentifier(window)
+        if let json = json {
+            pendingWindowResults[key] = json
+        } else {
+            pendingWindowResults.removeValue(forKey: key)
+        }
+    }
     
     // MARK: - Internal Methods
     
@@ -262,6 +351,68 @@ public class MultiWindowManager {
         // (save panels, alerts, other plugins' windows) — only touch
         // closingWindowHandles for windows this manager tracks, otherwise
         // the set grows without bound over the app's lifetime.
+        //
+        // A vetoed close never gets here (markWindowClosing runs on the
+        // REQUEST; willClose only fires on an actual close), so ownership
+        // sessions survive a Dart veto untouched.
+
+        // Read-and-clear this window's dialog result up front, before any
+        // teardown below. Clearing here — on EVERY real close, broadcast or
+        // not — is what keeps a window reopened under the same name from
+        // delivering a stale result; the local carries the value to the
+        // broadcast further down. The parent-teardown path closes orphaned
+        // dialogs reentrantly, and each of those reentrant willClose calls
+        // removes its own key, so results are never cross-cleared.
+        // (removeValue on the untracked windows this observer also sees is
+        // a no-op — the dictionary only ever holds setWindowResult callers.)
+        let pendingResult = pendingWindowResults.removeValue(forKey: ObjectIdentifier(window))
+
+        // Owned-window sessions come first: a dialog is also a tracked
+        // secondary window, so its session must be torn down before the
+        // early return below.
+        if ownershipSessions.contains(where: { $0.dialog === window }) {
+            // Only hand focus back when the closing dialog actually held
+            // it — a modeless dialog closed programmatically (e.g.
+            // closeWindow(named:) from another engine) while the user
+            // works elsewhere must not yank its parent to front. Win32
+            // owner activation follows the same rule.
+            let dialogWasKey = NSApp.keyWindow === window
+            var reKeyParent: NSWindow? = nil
+            for session in ownershipSessions where session.dialog === window {
+                if let observer = session.keyObserver {
+                    NotificationCenter.default.removeObserver(observer)
+                }
+                session.blocker?.removeFromSuperview()
+                if session.parent.childWindows?.contains(window) == true {
+                    session.parent.removeChildWindow(window)
+                }
+                reKeyParent = session.parent
+            }
+            ownershipSessions.removeAll(where: { $0.dialog === window })
+            // Any sibling modal session keeps its own blocker/observer,
+            // so the parent stays blocked until the LAST one closes; the
+            // re-key below then just triggers the sibling's key observer,
+            // which bounces focus to the remaining dialog.
+            if dialogWasKey {
+                reKeyParent?.makeKeyAndOrderFront(nil)
+            }
+        }
+
+        if ownershipSessions.contains(where: { $0.parent === window }) {
+            let orphaned = ownershipSessions.filter { $0.parent === window }
+            ownershipSessions.removeAll(where: { $0.parent === window })
+            for session in orphaned {
+                if let observer = session.keyObserver {
+                    NotificationCenter.default.removeObserver(observer)
+                }
+                session.blocker?.removeFromSuperview()
+                // Win32 destroys owned windows together with their owner;
+                // close them here so the two platforms agree. Sessions are
+                // dropped BEFORE closing so the reentrant willClose for
+                // each dialog doesn't try to re-key the vanishing parent.
+                session.dialog.close()
+            }
+        }
 
         // Check if it's a secondary window
         if let bdwWindow = window as? BitsdojoWindow,
@@ -276,7 +427,7 @@ public class MultiWindowManager {
                 // still the name's current holder: a replacement window
                 // already created under the same name means the name is not
                 // actually gone from the user's point of view.
-                broadcastWindowClosed(name)
+                broadcastWindowClosed(name, result: pendingResult)
             }
             closingWindowHandles.remove(window.windowNumber)
             return
@@ -299,16 +450,18 @@ public class MultiWindowManager {
         closingWindowHandles.insert(window.windowNumber)
     }
 
-    /// Notifies every remaining window's Dart engine that [name] closed.
-    /// The closing window's own engine is being torn down and is not told.
-    private func broadcastWindowClosed(_ name: String) {
+    /// Notifies every remaining window's Dart engine that [name] closed,
+    /// carrying the JSON result the window stored via setWindowResult (nil
+    /// when it never set one — a plain close). The closing window's own
+    /// engine is being torn down and is not told.
+    private func broadcastWindowClosed(_ name: String, result: String?) {
         var targets: [NSWindow] = []
         if let primary = primaryWindow {
             targets.append(primary)
         }
         targets.append(contentsOf: secondaryWindows)
         for target in targets {
-            BitsdojoWindowPlugin.getPluginForWindow(target)?.notifyWindowClosed(name)
+            BitsdojoWindowPlugin.getPluginForWindow(target)?.notifyWindowClosed(name, result: result)
         }
     }
     
@@ -358,4 +511,27 @@ public class MultiWindowManager {
         let topY = primary.frame.origin.y + primary.frame.size.height - position.y
         return NSPoint(x: position.x, y: topY)
     }
+}
+
+/// Transparent overlay that keeps a modal dialog's parent from taking
+/// mouse input. It only covers the mouse — key status reaching the parent
+/// is handled by the didBecomeKey observer in MultiWindowManager, because
+/// a view cannot intercept window-level focus changes.
+private final class ModalInputBlockerView: NSView {
+    weak var dialog: NSWindow?
+
+    override func mouseDown(with event: NSEvent) {
+        // The native cue for clicking a blocked window: beep and put the
+        // dialog back in front — out of the Dock first if the user
+        // minimized it, since makeKeyAndOrderFront alone won't.
+        NSSound.beep()
+        guard let dialog = dialog else { return }
+        if dialog.isMiniaturized {
+            dialog.deminiaturize(nil)
+        }
+        dialog.makeKeyAndOrderFront(nil)
+    }
+    override func rightMouseDown(with event: NSEvent) {}
+    override func otherMouseDown(with event: NSEvent) {}
+    override func scrollWheel(with event: NSEvent) {}
 }

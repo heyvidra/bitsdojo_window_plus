@@ -316,11 +316,6 @@ class WinWindow extends WinDesktopWindow {
     return IsZoomed(_hwnd!);
   }
 
-  @Deprecated("use isVisible instead")
-  bool get visible {
-    return isVisible;
-  }
-
   bool get isVisible {
     if (!isValidHandle(_hwnd, "get isVisible")) return false;
     return IsWindowVisible(_hwnd!);
@@ -353,14 +348,6 @@ class WinWindow extends WinDesktopWindow {
         _hwnd!, HWND(Pointer.fromAddress(0)), 0, 0, 0, 0, SWP_NOSIZE | SWP_NOMOVE | SWP_HIDEWINDOW);
   }
 
-  @Deprecated("use show()/hide() instead")
-  set visible(bool isVisible) {
-    if (isVisible) {
-      show();
-    } else {
-      hide();
-    }
-  }
 
   void close() {
     if (!isValidHandle(_hwnd, "close")) return;
@@ -520,19 +507,4 @@ class WinWindow extends WinDesktopWindow {
   @override
   Map<String, dynamic>? get arguments => _arguments;
   set arguments(Map<String, dynamic>? value) => _arguments = value;
-
-  @override
-  Future<void> openNewWindow({
-    String? name,
-    Size? size,
-    Offset? position,
-    Map<String, dynamic>? arguments,
-  }) {
-    return BitsdojoWindowPlatform.instance.openNewWindow(
-      name: name,
-      size: size,
-      position: position,
-      arguments: arguments,
-    );
-  }
 }

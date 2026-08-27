@@ -80,18 +80,8 @@ class NotImplementedWindow extends DesktopWindow {
   @override
   bool get isMainWindow => true;
 
-  @Deprecated("use isVisible instead")
-  bool get visible {
-    return isVisible;
-  }
-
   bool get isVisible {
     throw UnimplementedError('isVisible has not been implemented.');
-  }
-
-  @Deprecated("use show()/hide() instead")
-  set visible(bool isVisible) {
-    throw UnimplementedError('visible setter has not been implemented.');
   }
 
   @override
@@ -187,15 +177,9 @@ class NotImplementedWindow extends DesktopWindow {
   @override
   Map<String, dynamic>? get arguments => null;
 
-  @override
-  Future<void> openNewWindow({
-    String? name,
-    Size? size,
-    Offset? position,
-    Map<String, dynamic>? arguments,
-  }) {
-    throw UnimplementedError('openNewWindow() has not been implemented.');
-  }
+  // openNewWindow / openDialog are inherited: the concrete base delegates to
+  // BitsdojoWindowPlatform.instance, which throws its own UnimplementedError
+  // on a platform without multi-window support.
 
   @override
   VoidCallback? get onArgumentsChanged => null;

@@ -190,8 +190,22 @@ static void method_call_cb(FlMethodChannel *channel, FlMethodCall *method_call,
         }
       }
 
+      // Absent key means WindowModality.none; unknown values fall through to
+      // none in the manager.
+      const char *modality = nullptr;
+      FlValue *modality_val = fl_value_lookup_string(args, "modality");
+      if (modality_val &&
+          fl_value_get_type(modality_val) == FL_VALUE_TYPE_STRING) {
+        modality = fl_value_get_string(modality_val);
+      }
+
+      // The parent is THIS engine's window — the window whose plugin instance
+      // received the call — same philosophy as showNativeAlert. The channel
+      // rides along so the child-exit watch can deliver 'windowClosed' (and a
+      // dialog result) back into the engine that opened the window.
       MultiWindowManager::GetInstance().OpenNewWindow(
-          name, arguments, width, height, x, y, has_x && has_y);
+          name, arguments, width, height, x, y, has_x && has_y, modality,
+          get_window(self), self->channel);
       response = FL_METHOD_RESPONSE(fl_method_success_response_new(nullptr));
     }
   } else if (strcmp(method, "setAlwaysOnTop") == 0) {
@@ -324,11 +338,72 @@ void bitsdojo_window_set_dart_entrypoint_arguments(char **arguments) {
 }
 
 #include <signal.h>
+#include <stdlib.h>
+#include <string.h>
 #include <sys/prctl.h>
+#ifdef GDK_WINDOWING_X11
+#include <gdk/gdkx.h>
+#endif
+
+#ifdef GDK_WINDOWING_X11
+// Applies WM_TRANSIENT_FOR (and, for modal, the modal hint) once the window's
+// GdkWindow exists. The parent lives in another process, so
+// gtk_window_set_transient_for can't be used; the X property is written
+// directly through GDK to avoid a new Xlib link dependency.
+static void bdw_apply_cross_process_transient(GtkWidget *widget,
+                                              gpointer /*user_data*/) {
+  GdkWindow *gdk_window = gtk_widget_get_window(widget);
+  if (gdk_window == nullptr || !GDK_IS_X11_WINDOW(gdk_window))
+    return;
+
+  const char *xid_str = getenv("BDW_PARENT_XID");
+  if (xid_str == nullptr)
+    return;
+  // X property format 32 means "array of long", hence unsigned long here even
+  // though an XID is 32-bit on the wire.
+  unsigned long parent_xid = strtoul(xid_str, nullptr, 10);
+  if (parent_xid == 0)
+    return;
+
+  gdk_property_change(gdk_window,
+                      gdk_atom_intern_static_string("WM_TRANSIENT_FOR"),
+                      gdk_atom_intern_static_string("WINDOW"), 32,
+                      GDK_PROP_MODE_REPLACE, (const guchar *)&parent_xid, 1);
+
+  const char *modality = getenv("BDW_MODALITY");
+  if (modality != nullptr && strcmp(modality, "modal") == 0) {
+    gdk_window_set_modal_hint(gdk_window, TRUE);
+  }
+}
+#endif
 
 void bitsdojo_window_configure_from_environment(GtkWindow *window) {
   if (!window)
     return;
+
+  if (getenv("BDW_MODALITY") != nullptr) {
+    // Pure GTK, so it works on Wayland too: dialog styling/stacking wherever
+    // the WM honors the hint. Must be set before the window is realized,
+    // which holds here — runners configure before realizing.
+    gtk_window_set_type_hint(window, GDK_WINDOW_TYPE_HINT_DIALOG);
+  }
+
+#ifdef GDK_WINDOWING_X11
+  // BDW_PARENT_XID is only exported when the parent runs on X11, so a Wayland
+  // child never reaches the property write. The property needs the realized
+  // GdkWindow, and runners realize after configuring — defer to the realize
+  // signal in that (normal) case rather than forcing early realization, which
+  // would run before the Flutter view is attached.
+  if (getenv("BDW_PARENT_XID") != nullptr) {
+    if (gtk_widget_get_realized(GTK_WIDGET(window))) {
+      bdw_apply_cross_process_transient(GTK_WIDGET(window), nullptr);
+    } else {
+      g_signal_connect_after(window, "realize",
+                             G_CALLBACK(bdw_apply_cross_process_transient),
+                             nullptr);
+    }
+  }
+#endif
 
   const char *w_str = getenv("BDW_WIDTH");
   const char *h_str = getenv("BDW_HEIGHT");

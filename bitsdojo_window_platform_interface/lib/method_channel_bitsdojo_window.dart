@@ -41,6 +41,17 @@ class MethodChannelBitsdojoWindow extends BitsdojoWindowPlatform {
   }
 
   @override
+  Future<void> setWindowResult(String resultJson) async {
+    try {
+      await _channel.invokeMethod('setWindowResult', {'result': resultJson});
+    } catch (e, st) {
+      // A platform without the handler just delivers null to the awaiting
+      // openDialog — the same shape as a dialog closed without a result.
+      debugPrint("bitsdojo_window: could not store window result: $e\n$st");
+    }
+  }
+
+  @override
   Future<List<Display>> getDisplays() async {
     try {
       final raw = await _channel.invokeListMethod<Object?>('getDisplays');

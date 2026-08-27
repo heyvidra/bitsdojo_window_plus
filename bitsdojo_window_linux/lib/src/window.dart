@@ -60,12 +60,6 @@ class GtkWindow extends DesktopWindow {
   @override
   DesktopWindowCapabilities get capabilities => _capabilities;
 
-  @Deprecated("use isVisible instead")
-  @override
-  bool get visible {
-    return isVisible;
-  }
-
   @override
   bool get isVisible {
     if (!isValidHandle(handle, "get isVisible")) return false;
@@ -327,14 +321,6 @@ class GtkWindow extends DesktopWindow {
   }
 
   @Deprecated("use show()/hide() instead")
-  @override
-  set visible(bool isVisible) {
-    if (isVisible) {
-      show();
-    } else {
-      hide();
-    }
-  }
 
   @override
   void close() {
@@ -470,20 +456,5 @@ class GtkWindow extends DesktopWindow {
 
   set arguments(Map<String, dynamic>? value) {
     _arguments = value;
-  }
-
-  @override
-  Future<void> openNewWindow({
-    String? name,
-    Size? size,
-    Offset? position,
-    Map<String, dynamic>? arguments,
-  }) {
-    return BitsdojoWindowPlatform.instance.openNewWindow(
-      name: name,
-      size: size,
-      position: position,
-      arguments: arguments,
-    );
   }
 }

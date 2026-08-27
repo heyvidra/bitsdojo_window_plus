@@ -2,6 +2,7 @@
 #include <flutter/encodable_value.h>
 #include <flutter/method_call.h>
 #include <flutter/standard_method_codec.h>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -15,6 +16,8 @@ struct DeferredOpenParams {
   int height;
   int x;
   int y;
+  HWND parent;
+  MultiWindowManager::WindowModality modality;
 };
 
 constexpr UINT kDeferredOpenMessage = WM_APP + 0x77;
@@ -27,7 +30,7 @@ LRESULT CALLBACK DispatchWndProc(HWND hwnd, UINT message, WPARAM wparam,
     if (params) {
       MultiWindowManager::GetInstance().DoOpenNewWindow(
           params->name, params->arguments, params->width, params->height,
-          params->x, params->y);
+          params->x, params->y, params->parent, params->modality);
     }
     return 0;
   }
@@ -65,7 +68,8 @@ HWND MultiWindowManager::EnsureDispatchWindow() {
 
 void MultiWindowManager::OpenNewWindow(const char *name, const char *arguments,
                                        double width, double height, double x,
-                                       double y) {
+                                       double y, HWND parent,
+                                       WindowModality modality) {
   // Default size if not specified
   int w = (width == 0) ? 1280 : static_cast<int>(width);
   int h = (height == 0) ? 720 : static_cast<int>(height);
@@ -86,6 +90,8 @@ void MultiWindowManager::OpenNewWindow(const char *name, const char *arguments,
     params->height = h;
     params->x = static_cast<int>(x);
     params->y = static_cast<int>(y);
+    params->parent = parent;
+    params->modality = modality;
     if (PostMessage(dispatcher, kDeferredOpenMessage, 0,
                     reinterpret_cast<LPARAM>(params.get()))) {
       params.release(); // WndProc owns it now
@@ -96,12 +102,14 @@ void MultiWindowManager::OpenNewWindow(const char *name, const char *arguments,
   // Dispatch window or post failed: fall back to inline creation — the
   // pre-deferral behaviour, no worse than before.
   DoOpenNewWindow(name ? name : "", arguments ? arguments : "", w, h,
-                  static_cast<int>(x), static_cast<int>(y));
+                  static_cast<int>(x), static_cast<int>(y), parent, modality);
 }
 
 void MultiWindowManager::DoOpenNewWindow(const std::string &name_str,
                                          const std::string &arguments,
-                                         int w, int h, int x, int y) {
+                                         int w, int h, int x, int y,
+                                         HWND parent,
+                                         WindowModality modality) {
   {
     std::lock_guard<std::recursive_mutex> lock(mutex_);
     // Check if named window already exists
@@ -110,6 +118,9 @@ void MultiWindowManager::DoOpenNewWindow(const std::string &name_str,
       if (it != windows_.end()) {
         HWND hwnd = it->second;
         if (IsWindow(hwnd)) {
+          // Reuse path: modality is deliberately IGNORED here — the existing
+          // window keeps the ownership it was created with; only focus and
+          // arguments are refreshed.
           // Restore and activate existing window
           if (IsIconic(hwnd)) {
             ShowWindow(hwnd, SW_RESTORE);
@@ -136,11 +147,35 @@ void MultiWindowManager::DoOpenNewWindow(const std::string &name_str,
     pending_windows_.push_back(pending_entry);
   } // Lock released here to avoid deadlock during factory call
 
+  // The open was deferred through PostMessage, so the opener can be gone by
+  // the time we run — a dead parent gets neither ownership nor modality.
+  if (parent && !IsWindow(parent)) {
+    parent = nullptr;
+  }
+  if (!parent) {
+    modality = WindowModality::kNone;
+  }
+
+  // Classic Win32 modal order: the owner is disabled BEFORE the dialog
+  // exists, so no input can slip into the parent during construction.
+  if (modality == WindowModality::kModal) {
+    EnableWindow(parent, FALSE);
+  }
+
   // Create window via factory (RegisterWithRegistrar will be called inside here)
   HWND hwnd = window_factory_(L"Flutter", x, y, w, h,
                               name_str.empty() ? nullptr : name_str.c_str(),
                               arguments.empty() ? nullptr : arguments.c_str());
 
+  if (hwnd && modality != WindowModality::kNone) {
+    // The WindowFactory ABI cannot carry a parent (runner apps in the wild
+    // implement it), so ownership is assigned post-creation. On a top-level
+    // window GWLP_HWNDPARENT sets the OWNER, not a WS_CHILD parent: the new
+    // window stays above the parent and minimizes with it.
+    SetWindowLongPtr(hwnd, GWLP_HWNDPARENT, reinterpret_cast<LONG_PTR>(parent));
+  }
+
+  bool reenable_parent = false;
   {
     std::lock_guard<std::recursive_mutex> lock(mutex_);
     if (!hwnd) {
@@ -152,12 +187,40 @@ void MultiWindowManager::DoOpenNewWindow(const std::string &name_str,
           break;
         }
       }
+      if (modality == WindowModality::kModal) {
+        // Undo the pre-factory disable — unless a modal dialog from an
+        // earlier open still holds this parent.
+        reenable_parent = true;
+        for (const auto &[dialog, dialog_parent] : modal_parents_) {
+          if (dialog_parent == parent) {
+            reenable_parent = false;
+            break;
+          }
+        }
+      }
     }
 
     if (hwnd && !name_str.empty()) {
       windows_[name_str] = hwnd;
       window_names_[hwnd] = name_str;
     }
+
+    if (hwnd && modality == WindowModality::kModal) {
+      modal_parents_[hwnd] = parent;
+    }
+  }
+
+  if (reenable_parent) {
+    EnableWindow(parent, TRUE);
+  }
+
+  if (hwnd && modality == WindowModality::kModal) {
+    // Re-assert the disable. The factory ran outside the lock and pumps
+    // messages while constructing the view; a sibling modal dialog destroyed
+    // during that window found no modal_parents_ entry for this in-flight
+    // dialog and re-enabled the shared parent. Idempotent when nothing
+    // intervened.
+    EnableWindow(parent, FALSE);
   }
 }
 
@@ -196,8 +259,37 @@ void MultiWindowManager::RegisterClosedNotifier(HWND window,
   closed_notifiers_[window] = notifier;
 }
 
+void MultiWindowManager::SetWindowResult(HWND window, const char *result) {
+  if (!window || !result) {
+    return;
+  }
+  std::lock_guard<std::recursive_mutex> lock(mutex_);
+  // Overwrite, don't insert-once: a Dart onClose veto can cancel the close
+  // that followed a setWindowResult, and the NEXT closeWithResult must win.
+  pending_results_[window] = result;
+}
+
+std::optional<std::string> MultiWindowManager::TakePendingResult(HWND window) {
+  std::lock_guard<std::recursive_mutex> lock(mutex_);
+  auto it = pending_results_.find(window);
+  if (it == pending_results_.end()) {
+    return std::nullopt;
+  }
+  std::string result = std::move(it->second);
+  pending_results_.erase(it);
+  return result;
+}
+
 void MultiWindowManager::NotifyWindowClosed(const std::string &name,
                                             HWND closed_window) {
+  std::optional<std::string> result = TakePendingResult(closed_window);
+  BroadcastWindowClosed(name, closed_window,
+                        result ? result->c_str() : nullptr);
+}
+
+void MultiWindowManager::BroadcastWindowClosed(const std::string &name,
+                                               HWND closed_window,
+                                               const char *result) {
   // Copy under the lock, invoke outside it: a notifier runs Dart code that
   // can call straight back into this manager.
   std::vector<ClosedNotifier> to_notify;
@@ -210,8 +302,32 @@ void MultiWindowManager::NotifyWindowClosed(const std::string &name,
     }
   }
   for (const auto &notifier : to_notify) {
-    notifier(name.c_str());
+    notifier(name.c_str(), result);
   }
+}
+
+void MultiWindowManager::RestoreModalParent(HWND dialog) {
+  HWND parent = nullptr;
+  {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    auto it = modal_parents_.find(dialog);
+    if (it == modal_parents_.end()) {
+      return;
+    }
+    parent = it->second;
+    modal_parents_.erase(it);
+    for (const auto &[other_dialog, other_parent] : modal_parents_) {
+      if (other_parent == parent) {
+        // A sibling modal dialog still holds this parent disabled.
+        return;
+      }
+    }
+  }
+  // All three calls fail harmlessly on an already-destroyed parent, which
+  // covers owner destruction tearing down its owned dialogs.
+  EnableWindow(parent, TRUE);
+  SetForegroundWindow(parent);
+  SetActiveWindow(parent);
 }
 
 void MultiWindowManager::CloseWindow(const std::string &name) {
@@ -230,13 +346,25 @@ void MultiWindowManager::CloseWindow(const std::string &name) {
     window_names_.erase(hwnd);
   }
 
+  // Claim the pending result BEFORE DestroyWindow: destruction synchronously
+  // re-enters OnWindowDestroyed (WM_NCDESTROY), whose cleanup sweeps
+  // pending_results_ — claiming afterwards would broadcast a null result for
+  // a dialog that set one.
+  std::optional<std::string> pending_result = TakePendingResult(hwnd);
+
+  // Re-enable the owner BEFORE destroying a modal dialog: if the owner is
+  // still disabled when its modal window is destroyed, Win32 activates a
+  // random other application's window instead of the owner.
+  RestoreModalParent(hwnd);
+
   if (IsWindow(hwnd)) {
     DestroyWindow(hwnd);
   }
 
   // The mapping was erased above, so OnWindowDestroyed cannot broadcast
   // this close — do it here. Never double-fired for the same close.
-  NotifyWindowClosed(name, hwnd);
+  BroadcastWindowClosed(name, hwnd,
+                        pending_result ? pending_result->c_str() : nullptr);
 }
 
 void MultiWindowManager::CloseAllWindows(HWND except_window) {
@@ -264,12 +392,27 @@ HWND MultiWindowManager::GetWindow(const std::string &name) {
 }
 
 void MultiWindowManager::OnWindowDestroyed(HWND window) {
+  // Only reached on ACTUAL destruction (WM_NCDESTROY) — a WM_CLOSE the Dart
+  // side vetoes never gets here, so a vetoed modal keeps its parent disabled.
+  RestoreModalParent(window);
+
   std::string closed_name;
+  std::optional<std::string> pending_result;
   {
     std::lock_guard<std::recursive_mutex> lock(mutex_);
 
     message_senders_.erase(window);
     closed_notifiers_.erase(window);
+
+    // Claim any stored result unconditionally — even when the broadcast
+    // happened elsewhere (CloseWindow claims first) or won't happen at all
+    // (unnamed window). The OS recycles HWND values, so a leaked entry could
+    // be delivered for an unrelated future window on the same handle.
+    auto result_it = pending_results_.find(window);
+    if (result_it != pending_results_.end()) {
+      pending_result = std::move(result_it->second);
+      pending_results_.erase(result_it);
+    }
 
     // Find and remove from mappings
     auto name_it = window_names_.find(window);
@@ -284,7 +427,8 @@ void MultiWindowManager::OnWindowDestroyed(HWND window) {
   // CloseWindow (which erases the mapping and broadcasts itself) — the user
   // closed it, or its own Dart did. Broadcast outside the lock.
   if (!closed_name.empty()) {
-    NotifyWindowClosed(closed_name, window);
+    BroadcastWindowClosed(closed_name, window,
+                          pending_result ? pending_result->c_str() : nullptr);
   }
 }
 

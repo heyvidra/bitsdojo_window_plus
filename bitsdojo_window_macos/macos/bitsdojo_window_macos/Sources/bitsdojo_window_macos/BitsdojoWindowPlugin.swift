@@ -492,6 +492,15 @@ public class BitsdojoWindowPlugin: NSObject, FlutterPlugin {
             position = NSPoint(x: x, y: y)
         }
 
+        // Key is absent for WindowModality.none; absent/unknown both read
+        // as no modality on the manager side.
+        let modality = args?["modality"] as? String
+
+        // This engine's own window, same as showNativeAlert: the new
+        // window's parent is the window that asked for it, not whichever
+        // one happens to be key.
+        let callingWindow = self.registrar?.viewController?.view.window
+
         // Use MultiWindowManager to create the window
         DispatchQueue.main.async {
             let window = MultiWindowManager.shared.openNewWindow(
@@ -499,7 +508,9 @@ public class BitsdojoWindowPlugin: NSObject, FlutterPlugin {
                 arguments: arguments,
                 argumentsJson: argumentsJson,
                 size: size,
-                position: position
+                position: position,
+                modality: modality,
+                parent: callingWindow
             )
             result(["handle": window.windowHandle])
         }
@@ -524,6 +535,27 @@ public class BitsdojoWindowPlugin: NSObject, FlutterPlugin {
             MultiWindowManager.shared.closeWindow(named: name)
             result(nil)
         }
+
+    case "setWindowResult":
+        let args = call.arguments as? [String: Any]
+        // This engine's own window, same as openNewWindow: the result
+        // belongs to the dialog that set it, not whichever window happens
+        // to be key when the call arrives.
+        //
+        // SYNCHRONOUS on purpose, unlike the other cases: Dart's
+        // closeWithResult fires this call and then close() in the same turn,
+        // and the close's willClose is what reads the stored value. A
+        // DispatchQueue.main.async hop here lands AFTER that close block on
+        // the main queue, so the store would always miss the broadcast (and
+        // leak under a dead window's identity). Channel handlers already run
+        // on the main thread, so the direct call is safe.
+        if let window = self.registrar?.viewController?.view.window {
+            MultiWindowManager.shared.setWindowResult(
+                window: window, json: args?["result"] as? String)
+        }
+        // No window resolved (engine mid-teardown): nothing to store, and
+        // the close that follows will broadcast without a result.
+        result(nil)
 
     case "getDisplays":
         DispatchQueue.main.async {
@@ -558,9 +590,15 @@ public class BitsdojoWindowPlugin: NSObject, FlutterPlugin {
   }
 
   /// Tells this window's Dart side that the named window elsewhere in the
-  /// process has closed.
-  public func notifyWindowClosed(_ name: String) {
-    channel.invokeMethod("windowClosed", arguments: ["name": name])
+  /// process has closed. [result] is the JSON string the window stored via
+  /// setWindowResult, if any; when there is none the key is left out
+  /// entirely — Dart treats a missing key and an explicit null the same.
+  public func notifyWindowClosed(_ name: String, result: String? = nil) {
+    var arguments: [String: Any] = ["name": name]
+    if let result = result {
+      arguments["result"] = result
+    }
+    channel.invokeMethod("windowClosed", arguments: arguments)
   }
 
   public func updateArguments(_ arguments: [String: Any]?) {

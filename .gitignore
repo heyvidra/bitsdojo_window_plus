@@ -11,3 +11,6 @@ pubspec.lock
 .claude/
 .codegraph/
 .cursor/.build/
+
+# SwiftPM index-build output (clangd/sourcekit) inside the macOS plugin tree
+.build/

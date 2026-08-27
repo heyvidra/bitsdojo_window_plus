@@ -646,6 +646,13 @@ LRESULT CALLBACK main_window_proc(HWND window, UINT message, WPARAM wparam,
       state->closeRequestedCallback(window);
       return 0; // Prevent close
     }
+    // Destruction is imminent (DefWindowProc destroys on WM_CLOSE). If this
+    // window is a modal dialog, re-enable its owner NOW: waiting for the
+    // WM_NCDESTROY hook re-enables inside DestroyWindow, after Win32 has
+    // already flashed activation to some other window because the owner was
+    // still disabled. Idempotent and a no-op for non-modal windows, and the
+    // later OnWindowDestroyed call stays harmless.
+    MultiWindowManager::GetInstance().RestoreModalParent(window);
     break;
   }
   case WM_BDW_ACTION: {

@@ -10,9 +10,11 @@ import './window.dart';
 export './display.dart';
 export './native_ui.dart';
 export './window.dart';
+export './window_close_hub.dart';
 export './window_event.dart';
 export './window_common.dart';
 export './window_not_implemented.dart';
+export './window_ref.dart';
 export './platform_not_implemented.dart';
 
 /// The interface that implementations of bitsdojo_window must implement.
@@ -83,6 +85,7 @@ abstract class BitsdojoWindowPlatform extends PlatformInterface {
     Size? size,
     Offset? position,
     Map<String, dynamic>? arguments,
+    WindowModality modality = WindowModality.none,
   }) {
     throw UnimplementedError('openNewWindow() has not been implemented.');
   }
@@ -102,7 +105,22 @@ abstract class BitsdojoWindowPlatform extends PlatformInterface {
   /// closes — however it closed: [closeWindow], its own close button, or
   /// `appWindow.close()` from its own Dart. The window's own engine is gone
   /// by then, so it never receives this callback about itself.
+  ///
+  /// Legacy single-slot form; `WindowCloseHub.closed` (surfaced as
+  /// `desktopApp.windowClosed`) is the multi-listener stream. The hub still
+  /// invokes this callback, so setting it keeps working.
   void Function(String name)? onWindowClosed;
+
+  /// Stores [resultJson] as THIS window's close result, delivered to the
+  /// `openDialog` future awaiting it when the window actually closes.
+  ///
+  /// Completes once the native side has ACKNOWLEDGED the store —
+  /// `closeWithResult` awaits this before requesting the close, because the
+  /// channel message and the close request travel on different native
+  /// queues, and a close that lands first broadcasts a null result.
+  Future<void> setWindowResult(String resultJson) {
+    return _channelInstance.setWindowResult(resultJson);
+  }
 
   /// Shows an OS-native alert owned by the window this engine draws into: a
   /// sheet on macOS, a window-modal dialog on Windows and Linux. Returns the

@@ -12,6 +12,7 @@ export 'package:bitsdojo_window_platform_interface/bitsdojo_window_platform_inte
     show
         DesktopWindow,
         WindowEffect,
+        WindowRef,
         DesktopWindowButton,
         NativeAlertStyle,
         NativeMenuItem,

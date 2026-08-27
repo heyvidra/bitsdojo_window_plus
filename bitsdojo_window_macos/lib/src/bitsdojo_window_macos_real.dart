@@ -83,7 +83,9 @@ class BitsdojoWindowMacOS extends BitsdojoWindowPlatform {
     } else if (call.method == 'windowClosed') {
       final name = call.arguments['name'] as String?;
       if (name != null) {
-        onWindowClosed?.call(name);
+        // The hub fans out: openDialog futures, the windowClosed stream, and
+        // the legacy onWindowClosed callback.
+        WindowCloseHub.notifyClosed(name, call.arguments['result'] as String?);
       }
     } else if (call.method == 'argumentsChanged') {
       if (_handle != null) {
@@ -155,6 +157,7 @@ class BitsdojoWindowMacOS extends BitsdojoWindowPlatform {
     Size? size,
     Offset? position,
     Map<String, dynamic>? arguments,
+    WindowModality modality = WindowModality.none,
   }) async {
     await _channel.invokeMethod('openNewWindow', {
       'name': name,
@@ -162,6 +165,9 @@ class BitsdojoWindowMacOS extends BitsdojoWindowPlatform {
       'height': size?.height,
       'x': position?.dx,
       'y': position?.dy,
+      // Omitted for none: an older runner ignores the key either way, and
+      // the default case keeps the wire identical to pre-modality versions.
+      if (modality != WindowModality.none) 'modality': modality.name,
       'arguments': arguments,
       // Pre-encoded on the Dart side so the native layer can pass it through
       // to --bdw-args verbatim. Re-encoding the codec Map with

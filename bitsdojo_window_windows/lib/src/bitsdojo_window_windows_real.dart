@@ -62,9 +62,12 @@ class BitsdojoWindowWindows extends BitsdojoWindowPlatform {
       final window = handle != null ? getWindowForHandle(handle) : appWindow;
       window.emitWindowEvent(event);
     } else if (call.method == 'windowClosed') {
-      final name = (call.arguments as Map?)?['name'] as String?;
+      final arguments = call.arguments as Map?;
+      final name = arguments?['name'] as String?;
       if (name != null) {
-        onWindowClosed?.call(name);
+        // The hub fans out: openDialog futures, the windowClosed stream, and
+        // the legacy onWindowClosed callback.
+        WindowCloseHub.notifyClosed(name, arguments?['result'] as String?);
       }
     } else if (call.method == 'updateArguments') {
       final argumentsString = call.arguments as String?;
@@ -217,6 +220,7 @@ class BitsdojoWindowWindows extends BitsdojoWindowPlatform {
     Size? size,
     Offset? position,
     Map<String, dynamic>? arguments,
+    WindowModality modality = WindowModality.none,
   }) async {
     await _channel.invokeMethod('openNewWindow', {
       'name': name,
@@ -225,6 +229,9 @@ class BitsdojoWindowWindows extends BitsdojoWindowPlatform {
       'x': position?.dx,
       'y': position?.dy,
       'arguments': arguments != null ? jsonEncode(arguments) : null,
+      // Omitted for none: an older runner ignores the key either way, and
+      // the default case keeps the wire identical to pre-modality versions.
+      if (modality != WindowModality.none) 'modality': modality.name,
     });
   }
 

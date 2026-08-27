@@ -219,23 +219,9 @@ class MacOSWindow extends DesktopWindow {
     return 0;
   }
 
-  @Deprecated("use isVisible instead")
-  bool get visible {
-    return isVisible;
-  }
-
   bool get isVisible {
     if (!isValidHandle(handle, "get isVisible")) return false;
     return isWindowVisible(handle!);
-  }
-
-  @Deprecated("use show()/hide() instead")
-  set visible(bool isVisible) {
-    if (isVisible) {
-      show();
-    } else {
-      hide();
-    }
   }
 
   void show() {
@@ -349,21 +335,6 @@ class MacOSWindow extends DesktopWindow {
   @override
   Map<String, dynamic>? get arguments => _arguments;
   set arguments(Map<String, dynamic>? value) => _arguments = value;
-
-  @override
-  Future<void> openNewWindow({
-    String? name,
-    Size? size,
-    Offset? position,
-    Map<String, dynamic>? arguments,
-  }) {
-    return BitsdojoWindowPlatform.instance.openNewWindow(
-      name: name,
-      size: size,
-      position: position,
-      arguments: arguments,
-    );
-  }
 
   @override
   void setWindowTitleBarButtonVisibility(

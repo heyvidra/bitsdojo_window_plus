@@ -1,6 +1,7 @@
 library bitsdojo_window_linux;
 
 import 'dart:convert';
+import 'dart:io' show File, Platform;
 import 'package:flutter/services.dart';
 
 import 'package:bitsdojo_window_platform_interface/bitsdojo_window_platform_interface.dart';
@@ -38,6 +39,15 @@ class BitsdojoWindowLinux extends BitsdojoWindowPlatform {
         final handle = arguments['handle'] as int?;
         final window = handle != null ? getWindowForHandle(handle) : appWindow;
         window.emitWindowEvent(event);
+      } else if (call.method == 'windowClosed') {
+        // Sent by the parent-process child-exit watch: on Linux every window
+        // is its own process, so only windows THIS window spawned are
+        // reported (documented ceiling of the one-process-per-window model).
+        final arguments = call.arguments as Map?;
+        final name = arguments?['name'] as String?;
+        if (name != null) {
+          WindowCloseHub.notifyClosed(name, arguments?['result'] as String?);
+        }
       } else if (call.method == 'updateArguments') {
         final argumentsString = call.arguments as String?;
         if (argumentsString != null) {
@@ -88,6 +98,7 @@ class BitsdojoWindowLinux extends BitsdojoWindowPlatform {
     Size? size,
     Offset? position,
     Map<String, dynamic>? arguments,
+    WindowModality modality = WindowModality.none,
   }) async {
     await _channel.invokeMethod('openNewWindow', {
       'name': name,
@@ -96,7 +107,25 @@ class BitsdojoWindowLinux extends BitsdojoWindowPlatform {
       'x': position?.dx,
       'y': position?.dy,
       'arguments': arguments != null ? jsonEncode(arguments) : null,
+      // Omitted for none: an older runner ignores the key either way, and
+      // the default case keeps the wire identical to pre-modality versions.
+      if (modality != WindowModality.none) 'modality': modality.name,
     });
+  }
+
+  @override
+  Future<void> setWindowResult(String resultJson) async {
+    // One process per window: the parent set BDW_RESULT_FILE when it spawned
+    // this dialog, and reads the file back when this process exits. Writing
+    // it from Dart keeps the child side of the result channel native-free.
+    // Absent env (not a dialog, or an old parent) → nobody is awaiting.
+    final path = Platform.environment['BDW_RESULT_FILE'];
+    if (path == null || path.isEmpty) return;
+    try {
+      File(path).writeAsStringSync(resultJson);
+    } catch (e, st) {
+      debugPrint("bitsdojo_window: could not write window result: $e\n$st");
+    }
   }
 
   @override

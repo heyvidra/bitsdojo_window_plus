@@ -1,9 +1,19 @@
 import 'dart:async';
+import 'dart:convert' show jsonEncode;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/painting.dart';
 
-import 'window_event.dart';
+import 'bitsdojo_window_platform_interface.dart';
+
+int _autoNameCounter = 0;
+
+/// A process-unique name for a window the caller didn't name. Timestamp plus
+/// a per-isolate counter: two engines share neither, so names can't collide
+/// across the engines (or, on Linux, processes) of one app.
+String _autoWindowName() =>
+    'bdw#${DateTime.now().microsecondsSinceEpoch.toRadixString(36)}'
+    '-${_autoNameCounter++}';
 
 class _WindowChangeNotifier extends ChangeNotifier {
   void notify() => notifyListeners();
@@ -27,6 +37,40 @@ enum WindowEffect {
   acrylic,
   mica,
   tabbed,
+}
+
+/// Wire-level modality for `BitsdojoWindowPlatform.openNewWindow`. The
+/// public API is `DesktopWindow.openDialog` (with a plain `modal:` flag);
+/// this enum exists so platform implementations and the channel share one
+/// vocabulary.
+///
+/// The parent is always the *calling* window — the engine that invokes the
+/// open — mirroring how `showNativeAlert` parents its sheet.
+///
+/// Crosses the channel as [Enum.name] (`'modeless'` / `'modal'`; `none`
+/// is omitted), so renaming a value is a wire-format break. The names are
+/// pinned by a test in the platform interface package.
+enum WindowModality {
+  /// An independent top-level window — the default.
+  none,
+
+  /// A modeless dialog: owned by the opening window, so it stays above it
+  /// and minimizes with it, but the opener remains fully interactive.
+  ///
+  /// On macOS the dialog also follows the parent when the parent moves —
+  /// that is how AppKit child windows behave, and fighting it would cost
+  /// more than the platform difference is worth.
+  modeless,
+
+  /// A modal dialog: owned like [modeless], and the opening window cannot
+  /// be interacted with until this window closes.
+  ///
+  /// Only the *opening* window is blocked (window-modal, not app-modal).
+  /// On Linux, where each window is a separate process, the parent's
+  /// input is blocked and re-enabled when the dialog's process exits;
+  /// above-parent stacking is honored on X11 but not enforceable on
+  /// Wayland.
+  modal,
 }
 
 abstract class DesktopWindow {
@@ -127,11 +171,7 @@ abstract class DesktopWindow {
 
   set title(String newTitle);
 
-  @Deprecated("use isVisible instead")
-  bool get visible;
   bool get isVisible;
-  @Deprecated("use show()/hide() instead")
-  set visible(bool isVisible);
   void show();
   void hide();
   void close();
@@ -165,17 +205,165 @@ abstract class DesktopWindow {
   int get depth;
   String? get name;
   Map<String, dynamic>? get arguments;
-  Future<void> openNewWindow({
+
+  /// Opens an independent top-level window and returns a [WindowRef]
+  /// addressing it. An unnamed window gets an auto-generated name, so the
+  /// ref always works — before this, an unnamed window was unreachable the
+  /// moment this call returned.
+  ///
+  /// Completion means the open request was accepted, not that the window
+  /// finished appearing (window creation is deferred on some platforms).
+  /// Opening a name that already exists focuses that window and delivers
+  /// [arguments] to it instead of opening a second one.
+  ///
+  /// For dialogs — owned by this window, optionally modal, with a result —
+  /// use [openDialog] instead.
+  Future<WindowRef> openNewWindow({
     String? name,
     Size? size,
     Offset? position,
     Map<String, dynamic>? arguments,
-  });
+  }) async {
+    final effectiveName = name ?? _autoWindowName();
+    await BitsdojoWindowPlatform.instance.openNewWindow(
+      name: effectiveName,
+      size: size,
+      position: position,
+      arguments: arguments,
+    );
+    return WindowRef(effectiveName);
+  }
+
+  /// Opens a dialog owned by THIS window and completes when it closes, with
+  /// whatever the dialog passed to [closeWithResult] — or null when it was
+  /// closed without a result (its close button, [WindowRef.close], Esc).
+  ///
+  /// The receiver is the parent: the dialog stays above this window and, when
+  /// [modal] (the default), this window takes no input until it closes.
+  /// Modality is window-modal, never app-modal. Calling again with a [name]
+  /// that is still open focuses the existing dialog and returns the same
+  /// future rather than opening a second one.
+  ///
+  /// Platform honesty: on macOS the dialog also follows this window when it
+  /// moves (AppKit child windows do). On Linux — one process per window —
+  /// the input block and the result channel always work, above-parent
+  /// stacking only holds on X11, and calling openDialog again with the name
+  /// of a dialog that is STILL OPEN resolves the pending future with null
+  /// (the focus-the-existing-window forwarder process exiting is
+  /// indistinguishable from the dialog closing).
+  Future<Map<String, dynamic>?> openDialog({
+    String? name,
+    Size? size,
+    Offset? position,
+    Map<String, dynamic>? arguments,
+    bool modal = true,
+  }) async {
+    final effectiveName = name ?? _autoWindowName();
+    final result = WindowCloseHub.registerDialog(effectiveName);
+    try {
+      await BitsdojoWindowPlatform.instance.openNewWindow(
+        name: effectiveName,
+        size: size,
+        position: position,
+        arguments: arguments,
+        modality: modal ? WindowModality.modal : WindowModality.modeless,
+      );
+    } catch (error, stackTrace) {
+      WindowCloseHub.abortDialog(effectiveName, error, stackTrace);
+    }
+    return result;
+  }
+
+  /// Closes this window, delivering [result] to the `openDialog` call that
+  /// opened it. In a window nobody is awaiting, this is just [close].
+  ///
+  /// The result is stored before the close is requested, so if an `onClose`
+  /// interceptor vetoes the close, a later real close still delivers the
+  /// LAST stored result.
+  void closeWithResult(Map<String, dynamic> result) {
+    // Sequenced, not fired in parallel: the store must be ACKNOWLEDGED by
+    // the native side before the close goes out. The two travel on different
+    // native queues, and a close that lands first broadcasts null to the
+    // awaiting openDialog — observed, not hypothetical, on macOS.
+    BitsdojoWindowPlatform.instance
+        .setWindowResult(jsonEncode(result))
+        .whenComplete(close);
+  }
+
+  /// Shows an OS-native alert owned by THIS window — a sheet on macOS, a
+  /// window-modal dialog on Windows and Linux — and completes with the index
+  /// of the pressed button in [buttons], or -1 if dismissed without one.
+  ///
+  /// [buttons] is affirmative-first (`['Delete', 'Cancel']`). Windows shows
+  /// the system button set for the given count and ignores the labels.
+  ///
+  /// These native-UI calls route through this engine's channel: on a proxy
+  /// window from `getWindowForHandle` they act on the calling engine's own
+  /// window, not the proxy's.
+  Future<int> showNativeAlert({
+    required String title,
+    String? message,
+    List<String> buttons = const ['OK'],
+    NativeAlertStyle style = NativeAlertStyle.info,
+  }) =>
+      BitsdojoWindowPlatform.instance.showNativeAlert(
+        title: title,
+        message: message,
+        buttons: buttons,
+        style: style,
+      );
+
+  /// Two-button [showNativeAlert]: true when [confirmLabel] was pressed,
+  /// false for [cancelLabel] or a dismissal.
+  Future<bool> showNativeConfirm({
+    required String title,
+    String? message,
+    String confirmLabel = 'OK',
+    String cancelLabel = 'Cancel',
+    NativeAlertStyle style = NativeAlertStyle.warning,
+  }) async =>
+      await showNativeAlert(
+        title: title,
+        message: message,
+        buttons: [confirmLabel, cancelLabel],
+        style: style,
+      ) ==
+      0;
+
+  /// Pops up an OS-native menu over THIS window, completing when it closes
+  /// with the [NativeMenuItem.id] of the picked entry — or null if dismissed.
+  ///
+  /// [position] is in logical pixels from this window's top-left, so a
+  /// `GestureDetector`'s `details.globalPosition` goes straight through.
+  /// Null pops the menu at the mouse pointer.
+  Future<String?> showNativeMenu(
+    List<NativeMenuItem> items, {
+    Offset? position,
+  }) =>
+      BitsdojoWindowPlatform.instance.showNativeMenu(items, position: position);
 
   void setWindowTitleBarButtonVisibility(
-      DesktopWindowButton button, bool visible) {}
+      DesktopWindowButton button, bool visible) {
+    // Reaching this base body means no platform override exists — check
+    // capabilities before calling, and be loud about it in debug instead of
+    // silently doing nothing.
+    assert(
+      capabilities.supportsTitleBarButtonVisibility,
+      'setWindowTitleBarButtonVisibility is not supported on this platform — '
+      'guard the call with '
+      'appWindow.capabilities.supportsTitleBarButtonVisibility.',
+    );
+  }
+
   void setWindowTitleBarButtonOffset(
-      DesktopWindowButton button, Offset offset) {}
+      DesktopWindowButton button, Offset offset) {
+    assert(
+      capabilities.supportsTitleBarButtonOffset,
+      'setWindowTitleBarButtonOffset is not supported on this platform — '
+      'guard the call with '
+      'appWindow.capabilities.supportsTitleBarButtonOffset.',
+    );
+  }
 }
 
 /// A title-bar button.

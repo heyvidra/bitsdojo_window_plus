@@ -166,10 +166,17 @@ void BitsdojoWindowPlugin::RegisterWithRegistrar(
     // Register the closed-window notifier: this engine hears about every
     // OTHER named window that closes.
     MultiWindowManager::GetInstance().RegisterClosedNotifier(
-        window, [plugin_pointer = plugin.get()](const char *name) {
+        window, [plugin_pointer = plugin.get()](const char *name,
+                                                const char *result) {
           flutter::EncodableMap payload;
           payload[flutter::EncodableValue("name")] =
               flutter::EncodableValue(name ? name : "");
+          // Key absent when the window never set a result — Dart reads it
+          // with `as String?`, so absent and null are the same to it.
+          if (result) {
+            payload[flutter::EncodableValue("result")] =
+                flutter::EncodableValue(result);
+          }
           plugin_pointer->channel_->InvokeMethod(
               "windowClosed",
               std::make_unique<flutter::EncodableValue>(payload));
@@ -279,13 +286,32 @@ void BitsdojoWindowPlugin::HandleMethodCall(
               ? std::get<double>(y_it->second)
               : 0;
 
+      // The 'modality' key is absent for WindowModality.none; an unknown
+      // string is treated the same as absent.
+      auto modality_it = args->find(flutter::EncodableValue("modality"));
+      auto modality = MultiWindowManager::WindowModality::kNone;
+      if (modality_it != args->end() &&
+          std::holds_alternative<std::string>(modality_it->second)) {
+        const std::string &modality_str =
+            std::get<std::string>(modality_it->second);
+        if (modality_str == "modeless") {
+          modality = MultiWindowManager::WindowModality::kModeless;
+        } else if (modality_str == "modal") {
+          modality = MultiWindowManager::WindowModality::kModal;
+        }
+      }
+
       // Use MultiWindowManager to create the window. The block-scope `extern`
       // redeclaration this used to carry landed inside the anonymous namespace,
       // so it named a NEW internal-linkage symbol that nothing defines — GCC
       // rejects it as "declared static but never defined". The file-scope
       // declaration at the top is the one that resolves.
+      //
+      // The parent of an owned/modal window is always THIS engine's own
+      // window — same philosophy as showNativeAlert.
       GetMultiWindowManagerInstance().OpenNewWindow(name, arguments, width,
-                                                    height, x, y);
+                                                    height, x, y, window,
+                                                    modality);
 
       result->Success();
     } else {
@@ -318,6 +344,21 @@ void BitsdojoWindowPlugin::HandleMethodCall(
     }
     if (!name_str.empty()) {
       MultiWindowManager::GetInstance().CloseWindow(name_str);
+    }
+    result->Success();
+  } else if (method_call.method_name().compare("setWindowResult") == 0) {
+    // Called by a dialog on its OWN engine just before close(): stash the
+    // JSON payload keyed by this engine's window, to ride along in the
+    // windowClosed broadcast once the window actually goes away. Stored
+    // opaquely — the JSON is decoded on the Dart side.
+    auto args = std::get_if<flutter::EncodableMap>(method_call.arguments());
+    if (args) {
+      auto result_it = args->find(flutter::EncodableValue("result"));
+      if (result_it != args->end() &&
+          std::holds_alternative<std::string>(result_it->second)) {
+        MultiWindowManager::GetInstance().SetWindowResult(
+            window, std::get<std::string>(result_it->second).c_str());
+      }
     }
     result->Success();
   } else if (method_call.method_name().compare("getDisplays") == 0) {

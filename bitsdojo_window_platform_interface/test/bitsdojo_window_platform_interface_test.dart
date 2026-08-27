@@ -54,11 +54,7 @@ class MockDesktopWindow extends DesktopWindow {
   @override
   set title(String t) {}
   @override
-  bool get visible => _visible;
-  @override
   bool get isVisible => _visible;
-  @override
-  set visible(bool v) => _visible = v;
   @override
   void show() => _visible = true;
   @override
@@ -109,13 +105,8 @@ class MockDesktopWindow extends DesktopWindow {
   String? get name => null;
   @override
   Map<String, dynamic>? get arguments => null;
-  @override
-  Future<void> openNewWindow({
-    String? name,
-    Size? size,
-    Offset? position,
-    Map<String, dynamic>? arguments,
-  }) async {}
+  // openNewWindow/openDialog inherited: the concrete base delegates to
+  // BitsdojoWindowPlatform.instance (FakePlatform in these tests).
 }
 
 class FakePlatform extends BitsdojoWindowPlatform with MockPlatformInterfaceMixin {
@@ -130,13 +121,20 @@ class FakePlatform extends BitsdojoWindowPlatform with MockPlatformInterfaceMixi
   @override
   DesktopWindow getWindowForHandle(int handle) => _window;
 
+  /// (name, modality) of every open request, so tests can assert both the
+  /// auto-generated name and the modality the public API resolved to.
+  final List<(String?, WindowModality)> openCalls = [];
+
   @override
   Future<void> openNewWindow({
     String? name,
     Size? size,
     Offset? position,
     Map<String, dynamic>? arguments,
-  }) async {}
+    WindowModality modality = WindowModality.none,
+  }) async {
+    openCalls.add((name, modality));
+  }
 }
 
 void main() {
@@ -209,6 +207,12 @@ void main() {
       expect(WindowEventCode.values.map((c) => c.index),
           [0, 1, 2, 3, 4, 5, 6]);
       expect(DesktopWindowButton.values.map((b) => b.index), [0, 1, 2]);
+      // WindowModality crosses the channel by NAME, not index: the string
+      // literals below are what native `openNewWindow` handlers compare
+      // against, so a rename is a wire-format break even though a reorder
+      // is not.
+      expect(WindowModality.values.map((m) => m.name),
+          ['none', 'modeless', 'modal']);
     });
 
     test('a missing plugin reads as a dismissal, not an exception', () async {
@@ -516,6 +520,88 @@ void main() {
       const caps = DesktopWindowCapabilities(supportsBackgroundEffects: true);
       expect(caps.supportsBackgroundEffects, isTrue);
       expect(caps.supportsTitleBarButtonVisibility, isFalse);
+    });
+  });
+
+  group('close hub, dialogs and refs', () {
+    late FakePlatform platform;
+
+    setUp(() {
+      platform = FakePlatform();
+      BitsdojoWindowPlatform.instance = platform;
+    });
+
+    test('openNewWindow auto-names and returns a working ref', () async {
+      final window = MockDesktopWindow();
+      final a = await window.openNewWindow();
+      final b = await window.openNewWindow();
+      expect(a.name, startsWith('bdw#'));
+      expect(a.name, isNot(b.name));
+      expect(platform.openCalls.map((c) => c.$2),
+          everyElement(WindowModality.none));
+      // The ref's verbs address the platform by that name.
+      expect(await a.exists(), isFalse); // default hasWindow answer
+    });
+
+    test('openDialog resolves with the result closeWithResult stored',
+        () async {
+      final window = MockDesktopWindow();
+      final future = window.openDialog(name: 'confirm-a');
+      expect(platform.openCalls.single, ('confirm-a', WindowModality.modal));
+
+      WindowCloseHub.notifyClosed('confirm-a', '{"ok": true, "n": 1}');
+      expect(await future, {'ok': true, 'n': 1});
+    });
+
+    test('modal: false opens a modeless dialog', () async {
+      final window = MockDesktopWindow();
+      final future = window.openDialog(name: 'confirm-b', modal: false);
+      expect(platform.openCalls.single, ('confirm-b', WindowModality.modeless));
+      WindowCloseHub.notifyClosed('confirm-b');
+      expect(await future, isNull);
+    });
+
+    test('a plain close and a malformed result both read as null', () async {
+      final window = MockDesktopWindow();
+      final plain = window.openDialog(name: 'plain');
+      WindowCloseHub.notifyClosed('plain');
+      expect(await plain, isNull);
+
+      final malformed = window.openDialog(name: 'malformed');
+      WindowCloseHub.notifyClosed('malformed', 'not json {');
+      expect(await malformed, isNull);
+    });
+
+    test('re-registering a pending name returns the SAME future', () async {
+      // openDialog with an existing name focuses the existing dialog, so both
+      // callers are waiting on the same window and must get the same answer.
+      final first = WindowCloseHub.registerDialog('shared');
+      final second = WindowCloseHub.registerDialog('shared');
+      WindowCloseHub.notifyClosed('shared', '{"who": "both"}');
+      expect(await first, {'who': 'both'});
+      expect(await second, {'who': 'both'});
+    });
+
+    test('notifyClosed fans out to the stream and the legacy callback',
+        () async {
+      final fromStream = <String>[];
+      final fromLegacy = <String>[];
+      final sub = WindowCloseHub.closed.listen(fromStream.add);
+      platform.onWindowClosed = fromLegacy.add;
+
+      WindowCloseHub.notifyClosed('fan-out');
+      await Future<void>.delayed(Duration.zero);
+
+      expect(fromStream, ['fan-out']);
+      expect(fromLegacy, ['fan-out']);
+      await sub.cancel();
+    });
+
+    test('abortDialog fails the await instead of hanging it', () async {
+      final future = WindowCloseHub.registerDialog('doomed');
+      WindowCloseHub.abortDialog('doomed', StateError('spawn failed'),
+          StackTrace.current);
+      await expectLater(future, throwsStateError);
     });
   });
 }

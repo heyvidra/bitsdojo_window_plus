@@ -51,11 +51,7 @@ class GtkWindow extends DesktopWindow {
   @override
   set title(String newTitle) {}
   @override
-  bool get visible => false;
-  @override
   bool get isVisible => false;
-  @override
-  set visible(bool isVisible) {}
   @override
   void show() {}
   @override
@@ -109,10 +105,4 @@ class GtkWindow extends DesktopWindow {
   String? get name => null;
   @override
   Map<String, dynamic>? get arguments => null;
-  @override
-  Future<void> openNewWindow(
-      {String? name,
-      Size? size,
-      Offset? position,
-      Map<String, dynamic>? arguments}) async {}
 }

@@ -108,19 +108,15 @@ void doWhenWindowReady(VoidCallback callback) {
 
 /// This engine's own window.
 ///
-/// ## Where a thing lives, and why
+/// ## The shape of the API
 ///
-/// Anything that acts on THIS window is a member here — `appWindow.close()`,
-/// `appWindow.rect`, `appWindow.alwaysOnTop`. Anything addressing the process
-/// or the machine is a top-level function instead, because there is no one
-/// window it belongs to: [hasWindow], [closeWindow], [getDisplays],
-/// [showNativeAlert], [showNativeConfirm], [showNativeMenu], [terminateApp].
-///
-/// So it is `getDisplays()`, never `appWindow.getDisplays()`. The compiler
-/// catches the mistake, but the shape is worth knowing first. ([showNativeMenu]
-/// is the one that reads oddly: it takes a position in THIS window's
-/// coordinates. It stays top-level with the other native-UI calls, which all
-/// reach the same platform channel.)
+/// Every call has exactly one home, decided by what it acts on: THIS window
+/// is a member here — `appWindow.close()`, `appWindow.showNativeAlert(...)`,
+/// `appWindow.openDialog(...)` — and the process or the machine is a member
+/// of [desktopApp]: `desktopApp.closeWindow(name)`, `desktopApp.displays()`,
+/// `desktopApp.terminate()`. There are no other top-level functions; the
+/// bootstrap family (`runBitsdojoWindowApp`, `doWhenWindowReady`, ...) is the
+/// one exemption, because it runs before the objects mean anything.
 ///
 /// ## Sync or async
 ///
@@ -129,127 +125,126 @@ void doWhenWindowReady(VoidCallback callback) {
 /// return void. There is nothing to await — the platform is told, and the
 /// result arrives (if at all) as a [DesktopWindow.events] event.
 ///
-/// Anything crossing to ANOTHER window or waiting on the user returns a
-/// Future: [closeWindow], [hasWindow], `openNewWindow`, `animateTo`, and every
-/// native-UI call. `await appWindow.close()` does not compile, and that
-/// asymmetry with `await closeWindow(name)` is the rule above, not an
-/// oversight.
+/// Anything crossing a boundary — another window, a new process, the user —
+/// returns a Future: `openNewWindow`, `openDialog`, `animateTo`, the
+/// native-UI calls, and everything on [desktopApp]. `await appWindow.close()`
+/// does not compile, and that asymmetry with
+/// `await desktopApp.closeWindow(name)` is the rule above, not an oversight.
 DesktopWindow get appWindow {
   return _platform.appWindow;
 }
 
-/// Whether a window opened under [name] currently exists anywhere in the
-/// process. False on platforms without multi-window support.
-Future<bool> hasWindow(String name) => _platform.hasWindow(name);
+/// Process- and machine-level operations — everything that does not act on
+/// one particular window. The other half of the API lives on [appWindow].
+class DesktopApp {
+  const DesktopApp._();
 
-/// Closes the window opened under [name]. A no-op when no such window
-/// exists — unlike re-calling `openNewWindow` with a dismiss payload, this
-/// can never summon a window just to close it.
-Future<void> closeWindow(String name) => _platform.closeWindow(name);
+  /// Whether a window opened under [name] currently exists anywhere in the
+  /// process. False on platforms without multi-window support.
+  Future<bool> hasWindow(String name) => _platform.hasWindow(name);
 
-/// Called in THIS window's engine whenever a named window elsewhere in the
-/// process closes, however it closed. The closing window's own engine dies
-/// with it, so it never hears about itself.
+  /// Closes the window opened under [name]. A no-op when no such window
+  /// exists — unlike re-calling `openNewWindow` with a dismiss payload, this
+  /// can never summon a window just to close it.
+  Future<void> closeWindow(String name) => _platform.closeWindow(name);
+
+  /// Names of windows that closed, however they closed. Broadcast — listen
+  /// from as many places as needed. Process-wide on Windows and macOS; on
+  /// Linux — one process per window — only windows this window spawned are
+  /// reported. A window never hears about its own close (its engine dies
+  /// with it).
+  Stream<String> get windowClosed => WindowCloseHub.closed;
+
+  /// The monitors attached to the machine, in no guaranteed order. Empty when
+  /// the platform can't enumerate them.
+  ///
+  /// [Display.bounds] and [Display.workArea] are in the same units and origin
+  /// as `appWindow.position` on the same platform, so placing a window on a
+  /// chosen display is direct:
+  ///
+  /// ```dart
+  /// final display =
+  ///     (await desktopApp.displays()).firstWhere((d) => !d.isPrimary);
+  /// appWindow.position = display.workArea.topLeft;
+  /// ```
+  ///
+  /// Those units are logical pixels on macOS and Linux, and device pixels on
+  /// Windows — matching what `position` reads and writes there. Use
+  /// [Display.logicalBounds] for logical pixels on every platform.
+  Future<List<Display>> displays() => _platform.getDisplays();
+
+  /// Terminates the application.
+  void terminate() => _platform.terminateApp();
+
+  /// A [DesktopWindow] proxy for a raw native handle. Escape hatch; most
+  /// windows are better addressed by name via [WindowRef] or [closeWindow].
+  DesktopWindow windowForHandle(int handle) =>
+      _platform.getWindowForHandle(handle);
+}
+
+/// The process/machine half of the API; see [appWindow] for the shape rule.
+const DesktopApp desktopApp = DesktopApp._();
+
+@Deprecated('use desktopApp.hasWindow(name)')
+Future<bool> hasWindow(String name) => desktopApp.hasWindow(name);
+
+@Deprecated('use desktopApp.closeWindow(name)')
+Future<void> closeWindow(String name) => desktopApp.closeWindow(name);
+
+/// Legacy single-slot form of [DesktopApp.windowClosed]. Still fires (the
+/// close hub invokes it), but the stream is the supported API.
+@Deprecated('listen to desktopApp.windowClosed instead')
 void Function(String name)? get onWindowClosed => _platform.onWindowClosed;
+@Deprecated('listen to desktopApp.windowClosed instead')
 set onWindowClosed(void Function(String name)? handler) =>
     _platform.onWindowClosed = handler;
 
+@Deprecated('use desktopApp.windowForHandle(handle)')
 DesktopWindow getWindowForHandle(int handle) {
   return _platform.getWindowForHandle(handle);
 }
 
-/// The monitors attached to the machine, in no guaranteed order. Empty when the
-/// platform can't enumerate them.
-///
-/// [Display.bounds] and [Display.workArea] are in the same units and origin as
-/// `appWindow.position` on the same platform, so placing a window on a chosen
-/// display is direct:
-///
-/// ```dart
-/// final display = (await getDisplays()).firstWhere((d) => !d.isPrimary);
-/// appWindow.position = display.workArea.topLeft;
-/// ```
-///
-/// Those units are logical pixels on macOS and Linux, and device pixels on
-/// Windows — matching what `position` reads and writes there. Divide by
-/// [Display.scaleFactor] if you need logical pixels on every platform. A
-/// monitor placed above or left of the primary one reports negative
-/// coordinates, which is correct rather than a bug.
-Future<List<Display>> getDisplays() => _platform.getDisplays();
+@Deprecated('use desktopApp.displays()')
+Future<List<Display>> getDisplays() => desktopApp.displays();
 
-/// Shows an OS-native alert owned by THIS window — a sheet on macOS, a
-/// window-modal dialog on Windows and Linux — and completes with the index of
-/// the pressed button in [buttons], or -1 if it was dismissed without one.
-///
-/// Prefer Flutter's own `showDialog` for ordinary in-app confirmations; reach
-/// for this when the dialog has to be OS-modal, has to look native, or has to
-/// hang off the correct window in a multi-window app.
-///
-/// [buttons] is affirmative-first (`['Delete', 'Cancel']`). Windows shows the
-/// system button set for the given count — OK / OK+Cancel / Yes+No+Cancel —
-/// and ignores the labels.
+@Deprecated('use appWindow.showNativeAlert(...)')
 Future<int> showNativeAlert({
   required String title,
   String? message,
   List<String> buttons = const ['OK'],
   NativeAlertStyle style = NativeAlertStyle.info,
 }) =>
-    _platform.showNativeAlert(
+    appWindow.showNativeAlert(
       title: title,
       message: message,
       buttons: buttons,
       style: style,
     );
 
-/// Two-button [showNativeAlert]: true when [confirmLabel] was pressed, false
-/// for [cancelLabel] or a dismissal.
+@Deprecated('use appWindow.showNativeConfirm(...)')
 Future<bool> showNativeConfirm({
   required String title,
   String? message,
   String confirmLabel = 'OK',
   String cancelLabel = 'Cancel',
   NativeAlertStyle style = NativeAlertStyle.warning,
-}) async =>
-    await showNativeAlert(
+}) =>
+    appWindow.showNativeConfirm(
       title: title,
       message: message,
-      buttons: [confirmLabel, cancelLabel],
+      confirmLabel: confirmLabel,
+      cancelLabel: cancelLabel,
       style: style,
-    ) ==
-    0;
+    );
 
-/// Pops up an OS-native menu over THIS window, completing when it closes with
-/// the [NativeMenuItem.id] of the picked entry — or null if it was dismissed.
-///
-/// [position] is in logical pixels from the window's top-left, so a
-/// `GestureDetector`'s `details.globalPosition` goes straight through. Null
-/// pops the menu at the mouse pointer.
-///
-/// ```dart
-/// onSecondaryTapDown: (details) async {
-///   final picked = await showNativeMenu(
-///     const [
-///       NativeMenuItem('copy', 'Copy'),
-///       NativeMenuItem('paste', 'Paste', enabled: false),
-///       NativeMenuItem.separator(),
-///       NativeMenuItem('more', 'More', submenu: [
-///         NativeMenuItem('wrap', 'Wrap lines', checked: true),
-///       ]),
-///     ],
-///     position: details.globalPosition,
-///   );
-/// }
-/// ```
-///
-/// Flutter's own `MenuAnchor` is the better default — it's themable and stays
-/// in the widget tree. Use this when the menu must be a real OS menu: system
-/// styling and animation, and free to extend past the window's edges.
+@Deprecated('use appWindow.showNativeMenu(...)')
 Future<String?> showNativeMenu(
   List<NativeMenuItem> items, {
   Offset? position,
 }) =>
-    _platform.showNativeMenu(items, position: position);
+    appWindow.showNativeMenu(items, position: position);
 
+@Deprecated('use desktopApp.terminate()')
 void terminateApp() {
-  _platform.terminateApp();
+  desktopApp.terminate();
 }

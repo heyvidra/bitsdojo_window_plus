@@ -59,7 +59,7 @@ class ContextMenuRegion extends StatelessWidget {
         final position = details.globalPosition;
         final menu = items ?? itemsBuilder!(position);
         if (menu.isEmpty) return;
-        final picked = await showNativeMenu(menu, position: position);
+        final picked = await appWindow.showNativeMenu(menu, position: position);
         if (picked == null) {
           onDismissed?.call();
         } else {
