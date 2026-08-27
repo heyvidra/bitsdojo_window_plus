@@ -1,8 +1,10 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:developer' as developer;
 import 'dart:io';
 
 import 'package:bitsdojo_window/bitsdojo_window.dart';
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
 
 void main(List<String> args) {
@@ -139,16 +141,23 @@ class _MyHomePageState extends State<MyHomePage> {
   String _lastNativeUIResult = 'nothing yet';
   final List<String> _windowEventLog = [];
   List<Display> _displays = const [];
+  WindowRef? _lastOpenedRef;
   StreamSubscription<WindowEvent>? _eventSubscription;
+  StreamSubscription<String>? _windowClosedSubscription;
   final Map<DesktopWindowButton, bool> _buttonVisibility = {
     DesktopWindowButton.close: true,
     DesktopWindowButton.minimize: true,
     DesktopWindowButton.zoom: true,
   };
 
+  /// Guards the per-isolate service-extension registration: initState runs
+  /// again on hot restart, and registering the same extension twice throws.
+  static bool _testHooksInstalled = false;
+
   @override
   void initState() {
     super.initState();
+    if (kDebugMode) _registerVmTestHooks();
     // Refresh the identity badges / stat panels when windowReady or
     // updateArguments land after the first build.
     appWindow.changes.addListener(_onWindowChanged);
@@ -161,11 +170,40 @@ class _MyHomePageState extends State<MyHomePage> {
         ? WindowEffect.acrylic
         : WindowEffect.disabled;
     _watchWindowEvents();
+    _watchWindowClosed();
     _refreshDisplays();
   }
 
   void _onWindowChanged() {
     if (mounted) setState(() {});
+  }
+
+  /// Debug-only VM-service hooks so the dialog round trip can be driven and
+  /// asserted from a script (`ext.bdw.openModalDialog` on the main window's
+  /// isolate, `ext.bdw.closeWithResult` on the dialog's) — the only runtime
+  /// regression rig multi-window behavior has, since widget tests can't spawn
+  /// real native windows.
+  void _registerVmTestHooks() {
+    if (_testHooksInstalled) return;
+    _testHooksInstalled = true;
+    developer.registerExtension('ext.bdw.openModalDialog',
+        (method, params) async {
+      final result = await appWindow.openDialog(
+        name: params['name'] ?? 'vm-test-dialog',
+        size: const Size(430, 320),
+        arguments: {'onlyClose': true, 'kind': 'modal-dialog'},
+      );
+      return developer.ServiceExtensionResponse.result(
+          jsonEncode({'dialogResult': result}));
+    });
+    developer.registerExtension('ext.bdw.closeWithResult',
+        (method, params) async {
+      appWindow.closeWithResult({
+        'answer': 42,
+        'from': appWindow.name ?? 'unnamed',
+      });
+      return developer.ServiceExtensionResponse.result('{"ok": true}');
+    });
   }
 
   void _watchWindowEvents() {
@@ -182,16 +220,28 @@ class _MyHomePageState extends State<MyHomePage> {
         WindowMaximized() => 'maximized',
         WindowRestored() => 'restored',
       };
-      if (!mounted) return;
-      setState(() {
-        _windowEventLog.insert(0, label);
-        if (_windowEventLog.length > 6) _windowEventLog.removeLast();
-      });
+      _logEvent(label);
+    });
+  }
+
+  void _watchWindowClosed() {
+    // Every window's close lands here by name — dialogs included, which is
+    // how 'closed: bdw#...' lines show up right after a dialog resolves.
+    _windowClosedSubscription = desktopApp.windowClosed.listen((name) {
+      _logEvent('closed: $name');
+    });
+  }
+
+  void _logEvent(String label) {
+    if (!mounted) return;
+    setState(() {
+      _windowEventLog.insert(0, label);
+      if (_windowEventLog.length > 6) _windowEventLog.removeLast();
     });
   }
 
   Future<void> _refreshDisplays() async {
-    final displays = await getDisplays();
+    final displays = await desktopApp.displays();
     if (mounted) setState(() => _displays = displays);
   }
 
@@ -199,6 +249,7 @@ class _MyHomePageState extends State<MyHomePage> {
   void dispose() {
     appWindow.changes.removeListener(_onWindowChanged);
     _eventSubscription?.cancel();
+    _windowClosedSubscription?.cancel();
     _titleController.dispose();
     super.dispose();
   }
@@ -399,9 +450,35 @@ class _MyHomePageState extends State<MyHomePage> {
           _buildButton(
             icon: Icons.add_to_photos,
             label: 'Open Regular Window',
-            onPressed: () => appWindow.openNewWindow(
-              arguments: {'onlyClose': false, 'source': 'regular'},
-            ),
+            onPressed: () async {
+              final ref = await appWindow.openNewWindow(
+                arguments: {'onlyClose': false, 'source': 'regular'},
+              );
+              // Unnamed window, yet addressable: the auto-generated name in
+              // the ref is the whole point of openNewWindow returning one.
+              if (mounted) setState(() => _lastOpenedRef = ref);
+              _logEvent('opened ${ref.name}');
+            },
+          ),
+          _buildButton(
+            icon: Icons.link_off,
+            label: _lastOpenedRef == null
+                ? 'Close Last Ref (open a regular window first)'
+                : 'Close Last Ref via WindowRef',
+            color: Colors.blueGrey,
+            onPressed: _closeLastRefWindow,
+          ),
+          _buildButton(
+            icon: Icons.cancel_presentation,
+            label: 'Close Inspector via desktopApp',
+            color: Colors.brown,
+            onPressed: () async {
+              final has = await desktopApp.hasWindow('inspector_window');
+              if (has) await desktopApp.closeWindow('inspector_window');
+              _logEvent(has
+                  ? 'desktopApp.closeWindow(inspector_window)'
+                  : 'inspector_window not open');
+            },
           ),
           _buildButton(
             icon: Icons.pin_invoke,
@@ -424,6 +501,43 @@ class _MyHomePageState extends State<MyHomePage> {
               arguments: {'onlyClose': true, 'kind': 'custom'},
             ),
           ),
+          _buildButton(
+            icon: Icons.web_asset,
+            label: 'Open Modeless Dialog',
+            color: Colors.indigo,
+            onPressed: () => appWindow.openDialog(
+              size: const Size(430, 300),
+              modal: false,
+              arguments: {'onlyClose': true, 'kind': 'modeless-dialog'},
+            ),
+          ),
+          _buildButton(
+            icon: Icons.front_hand,
+            label: 'Open Modal Dialog (await result)',
+            color: Colors.indigo,
+            onPressed: () async {
+              final result = await appWindow.openDialog(
+                size: const Size(430, 300),
+                arguments: {'onlyClose': true, 'kind': 'modal-dialog'},
+              );
+              await appWindow.showNativeAlert(
+                title: 'Dialog result',
+                message: result == null
+                    ? 'Closed without a result.'
+                    : 'closeWithResult sent: $result',
+              );
+            },
+          ),
+          if (!appWindow.isMainWindow)
+            _buildButton(
+              icon: Icons.reply,
+              label: 'Close With Result',
+              color: Colors.green,
+              onPressed: () => appWindow.closeWithResult({
+                'answer': 42,
+                'from': appWindow.name ?? 'unnamed',
+              }),
+            ),
           _buildButton(
             icon: Icons.visibility_off,
             label: 'Hide for 1.2s Then Show',
@@ -671,7 +785,7 @@ class _MyHomePageState extends State<MyHomePage> {
                 _buildSmallAction(
                   'Alert: ${style.name}',
                   () async {
-                    final index = await showNativeAlert(
+                    final index = await appWindow.showNativeAlert(
                       title: 'Native alert (${style.name})',
                       message: 'This one belongs to '
                           '${appWindow.name ?? 'the main window'}.',
@@ -688,7 +802,7 @@ class _MyHomePageState extends State<MyHomePage> {
             icon: Icons.help_outline,
             label: 'Native Confirm',
             onPressed: () async {
-              final confirmed = await showNativeConfirm(
+              final confirmed = await appWindow.showNativeConfirm(
                 title: 'Delete this window?',
                 message: 'Nothing is actually deleted — this is a demo.',
                 confirmLabel: 'Delete',
@@ -1156,6 +1270,14 @@ class _MyHomePageState extends State<MyHomePage> {
         'onlyClose': false,
       },
     );
+  }
+
+  Future<void> _closeLastRefWindow() async {
+    final ref = _lastOpenedRef;
+    if (ref == null) return;
+    final existed = await ref.exists();
+    await ref.close();
+    _logEvent('ref ${ref.name}: existed=$existed, closed');
   }
 
   Future<void> _hideAndRestoreWindow() async {

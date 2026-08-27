@@ -78,13 +78,7 @@ class _FakeDesktopWindow extends DesktopWindow {
   set title(String newTitle) {}
 
   @override
-  bool get visible => isVisible;
-
-  @override
   bool get isVisible => _isVisible;
-
-  @override
-  set visible(bool isVisible) => _isVisible = isVisible;
 
   @override
   void show() => _isVisible = true;
@@ -162,15 +156,8 @@ class _FakeDesktopWindow extends DesktopWindow {
   @override
   Map<String, dynamic>? get arguments => _arguments;
 
-  @override
-  Future<void> openNewWindow({
-    String? name,
-    Size? size,
-    Offset? position,
-    Map<String, dynamic>? arguments,
-  }) async {
-    _arguments = arguments;
-  }
+  // openNewWindow/openDialog inherited from the concrete base, which
+  // delegates to BitsdojoWindowPlatform.instance (the fake platform below).
 
   @override
   void setWindowTitleBarButtonVisibility(
@@ -206,6 +193,7 @@ class _FakeBitsdojoWindowPlatform extends BitsdojoWindowPlatform {
     Size? size,
     Offset? position,
     Map<String, dynamic>? arguments,
+    WindowModality modality = WindowModality.none,
   }) async {}
 }
 

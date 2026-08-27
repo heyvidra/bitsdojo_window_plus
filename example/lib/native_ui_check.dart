@@ -33,7 +33,7 @@ void main(List<String> args) {
       window.show();
 
       await Future.delayed(const Duration(seconds: 2));
-      final displays = await getDisplays();
+      final displays = await desktopApp.displays();
       debugPrint('CHECK displays count=${displays.length}');
       for (final display in displays) {
         debugPrint('CHECK display $display');
@@ -76,7 +76,7 @@ void main(List<String> args) {
       // which silently mistimes every time a step is added above.
       await Future.delayed(const Duration(seconds: 1));
       debugPrint('CHECK awaiting-alert');
-      final index = await showNativeAlert(
+      final index = await appWindow.showNativeAlert(
         title: 'Round trip?',
         message: 'Press Return for the first button.',
         buttons: ['Yes', 'No'],
@@ -85,7 +85,7 @@ void main(List<String> args) {
       debugPrint('CHECK alert index=$index');
 
       await Future.delayed(const Duration(seconds: 1));
-      final picked = await showNativeMenu(
+      final picked = await appWindow.showNativeMenu(
         const [
           NativeMenuItem('copy', 'Copy'),
           NativeMenuItem('paste', 'Paste', enabled: false),
